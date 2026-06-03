@@ -89,7 +89,11 @@ async function onSubmit() {
 }
 
 async function onDelete(node) {
-  await ElMessageBox.confirm(`确定删除分类「${node.name}」？`, '提示', { type: 'warning' })
+  const hasChildren = node.parentId == null && node.children && node.children.length > 0
+  const msg = hasChildren
+    ? `确定删除一级分类「${node.name}」？其下 ${node.children.length} 个二级分类将一并删除。`
+    : `确定删除分类「${node.name}」？`
+  await ElMessageBox.confirm(msg, '提示', { type: 'warning' })
   await deleteCategory(node.id)
   ElMessage.success('删除成功')
   load()
@@ -119,19 +123,14 @@ onMounted(load)
         <div class="node">
           <span class="node-name">{{ data.name }}</span>
           <span v-if="data.description" class="node-desc">（{{ data.description }}）</span>
-          <el-tag v-if="data.system" size="small" type="info" class="node-tag">预设</el-tag>
-          <el-tag v-else size="small" type="success" class="node-tag">自定义</el-tag>
 
           <span class="node-actions">
             <!-- 一级节点可加二级 -->
             <el-button v-if="data.parentId == null" link type="primary" size="small" @click.stop="openAddSub(data)">
               加二级
             </el-button>
-            <!-- 仅自定义可改/删 -->
-            <template v-if="!data.system">
-              <el-button link type="primary" size="small" @click.stop="openEdit(data)">编辑</el-button>
-              <el-button link type="danger" size="small" @click.stop="onDelete(data)">删除</el-button>
-            </template>
+            <el-button link type="primary" size="small" @click.stop="openEdit(data)">编辑</el-button>
+            <el-button link type="danger" size="small" @click.stop="onDelete(data)">删除</el-button>
           </span>
         </div>
       </template>
