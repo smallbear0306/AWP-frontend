@@ -2,44 +2,48 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { pageRecord, createRecord, updateRecord, deleteRecord } from '@/api/record'
-import { listCategory } from '@/api/category'
+import { getCategoryTree } from '@/api/category'
 
 const loading = ref(false)
 const list = ref([])
 const total = ref(0)
-const categories = ref([])
+const tree = ref([]) // 全量分类树（含支出与收入）
 
 const query = reactive({
   page: 1,
   size: 10,
   type: null,
   categoryId: null,
+  parentCategoryId: null,
   startDate: null,
   endDate: null,
 })
 const dateRange = ref([])
+const filterCat = ref([]) // 过滤级联值：[一级] 或 [一级, 二级]
+
+// 级联选择器配置
+const cascaderProps = { value: 'id', label: 'name', children: 'children' }
+const filterCascaderProps = { ...cascaderProps, checkStrictly: true }
 
 // 弹窗
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const editingId = ref(null)
 const formRef = ref()
-const form = reactive({
-  categoryId: null,
-  type: 0,
-  amount: null,
-  remark: '',
-  recordDate: '',
-})
+const form = reactive({ type: 0, amount: null, remark: '', recordDate: '', catPath: [] })
 
 const rules = {
-  categoryId: [{ required: true, message: '请选择分类', trigger: 'change' }],
+  catPath: [{ required: true, message: '请选择分类', trigger: 'change' }],
   amount: [{ required: true, message: '请输入金额', trigger: 'blur' }],
   recordDate: [{ required: true, message: '请选择日期', trigger: 'change' }],
 }
 
-// 弹窗内按所选类型过滤分类
-const formCategories = computed(() => categories.value.filter((c) => c.type === form.type))
+// 弹窗内按所选类型过滤分类树
+const formCatOptions = computed(() => tree.value.filter((n) => n.type === form.type))
+
+async function loadTree() {
+  tree.value = await getCategoryTree()
+}
 
 async function load() {
   loading.value = true
@@ -59,8 +63,12 @@ async function load() {
   }
 }
 
-async function loadCategories() {
-  categories.value = await listCategory()
+// 过滤分类级联变化：长度1=按一级过滤，长度2=按二级过滤
+function onFilterCatChange(val) {
+  query.categoryId = null
+  query.parentCategoryId = null
+  if (val && val.length === 1) query.parentCategoryId = val[0]
+  else if (val && val.length === 2) query.categoryId = val[1]
 }
 
 function onSearch() {
@@ -71,6 +79,8 @@ function onSearch() {
 function onReset() {
   query.type = null
   query.categoryId = null
+  query.parentCategoryId = null
+  filterCat.value = []
   dateRange.value = []
   query.page = 1
   load()
@@ -80,11 +90,11 @@ function openCreate() {
   dialogTitle.value = '记一笔'
   editingId.value = null
   Object.assign(form, {
-    categoryId: null,
     type: 0,
     amount: null,
     remark: '',
     recordDate: new Date().toISOString().slice(0, 10),
+    catPath: [],
   })
   dialogVisible.value = true
 }
@@ -93,24 +103,25 @@ function openEdit(row) {
   dialogTitle.value = '编辑账单'
   editingId.value = row.id
   Object.assign(form, {
-    categoryId: row.categoryId,
     type: row.type,
     amount: row.amount,
     remark: row.remark || '',
     recordDate: row.recordDate,
+    catPath: [row.parentCategoryId, row.categoryId],
   })
   dialogVisible.value = true
 }
 
 // 类型切换时清空已选分类（避免类型与分类不一致）
 function onTypeChange() {
-  form.categoryId = null
+  form.catPath = []
 }
 
 async function onSubmit() {
   await formRef.value.validate()
+  const categoryId = form.catPath[form.catPath.length - 1]
   const payload = {
-    categoryId: form.categoryId,
+    categoryId,
     type: form.type,
     amount: form.amount,
     remark: form.remark,
@@ -135,7 +146,7 @@ async function onDelete(row) {
 }
 
 onMounted(() => {
-  loadCategories()
+  loadTree()
   load()
 })
 </script>
@@ -148,9 +159,15 @@ onMounted(() => {
         <el-option label="支出" :value="0" />
         <el-option label="收入" :value="1" />
       </el-select>
-      <el-select v-model="query.categoryId" placeholder="全部分类" clearable filterable style="width: 150px">
-        <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-      </el-select>
+      <el-cascader
+        v-model="filterCat"
+        :options="tree"
+        :props="filterCascaderProps"
+        placeholder="全部分类"
+        clearable
+        style="width: 240px"
+        @change="onFilterCatChange"
+      />
       <el-date-picker
         v-model="dateRange"
         type="daterange"
@@ -167,7 +184,11 @@ onMounted(() => {
 
     <el-table v-loading="loading" :data="list" border stripe>
       <el-table-column prop="recordDate" label="日期" width="120" />
-      <el-table-column prop="categoryName" label="分类" width="120" />
+      <el-table-column label="分类" min-width="160">
+        <template #default="{ row }">
+          {{ row.parentCategoryName }} <span class="sep">/</span> {{ row.categoryName }}
+        </template>
+      </el-table-column>
       <el-table-column label="类型" width="90">
         <template #default="{ row }">
           <el-tag :type="row.type === 1 ? 'success' : 'danger'">
@@ -209,10 +230,14 @@ onMounted(() => {
             <el-radio :value="1">收入</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="分类" prop="categoryId">
-          <el-select v-model="form.categoryId" placeholder="请选择分类" style="width: 100%">
-            <el-option v-for="c in formCategories" :key="c.id" :label="c.name" :value="c.id" />
-          </el-select>
+        <el-form-item label="分类" prop="catPath">
+          <el-cascader
+            v-model="form.catPath"
+            :options="formCatOptions"
+            :props="cascaderProps"
+            placeholder="选择一级 / 二级分类"
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="金额" prop="amount">
           <el-input-number v-model="form.amount" :min="0.01" :precision="2" :step="1" style="width: 100%" />
@@ -239,6 +264,10 @@ onMounted(() => {
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
+}
+.sep {
+  color: #c0c4cc;
+  margin: 0 2px;
 }
 .pager {
   margin-top: 16px;
