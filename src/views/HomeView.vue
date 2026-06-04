@@ -3,53 +3,51 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   pageRecord, createRecord, updateRecord, deleteRecord,
-  recognizeRecord, getRecordImage,
+  recognizeRecord, batchCreateRecord, getRecordImage,
 } from '@/api/record'
 import { getCategoryTree } from '@/api/category'
 
 const loading = ref(false)
 const list = ref([])
 const total = ref(0)
-const tree = ref([]) // 全量分类树（含支出与收入）
+const tree = ref([])
 
 const query = reactive({
   page: 1, size: 10, type: null, categoryId: null, parentCategoryId: null, startDate: null, endDate: null,
 })
 const dateRange = ref([])
 const filterCat = ref([])
-
 const cascaderProps = { value: 'id', label: 'name', children: 'children' }
 const filterCascaderProps = { ...cascaderProps, checkStrictly: true }
 
-// 记账弹窗
+// 手动记一笔
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const editingId = ref(null)
 const formRef = ref()
-const recognizing = ref(false)
-const form = reactive({
-  type: 0, amount: null, remark: '', recordDate: '', catPath: [],
-  imageBase64: '',     // 新增时随账单入库的压缩图
-  imagePreview: '',    // 弹窗内预览用 data URL
-})
-
+const form = reactive({ type: 0, amount: null, remark: '', recordDate: '', catPath: [] })
 const rules = {
   catPath: [{ required: true, message: '请选择分类', trigger: 'change' }],
   amount: [{ required: true, message: '请输入金额', trigger: 'blur' }],
   recordDate: [{ required: true, message: '请选择日期', trigger: 'change' }],
 }
-
 const formCatOptions = computed(() => tree.value.filter((n) => n.type === form.type))
 
-// 详情弹窗
+// 截图记账（多笔复核）
+const recoVisible = ref(false)
+const recognizing = ref(false)
+const recoImageB64 = ref('')
+const recoImagePreview = ref('')
+const recoItems = ref([]) // [{type, catPath:[p,l], amount, recordDate, remark}]
+function catOptionsFor(type) { return tree.value.filter((n) => n.type === type) }
+
+// 详情
 const detailVisible = ref(false)
 const detail = ref({})
 const detailImage = ref('')
 const detailImgLoading = ref(false)
 
-async function loadTree() {
-  tree.value = await getCategoryTree()
-}
+async function loadTree() { tree.value = await getCategoryTree() }
 
 async function load() {
   loading.value = true
@@ -58,8 +56,7 @@ async function load() {
       query.startDate = dateRange.value[0]; query.endDate = dateRange.value[1]
     } else { query.startDate = null; query.endDate = null }
     const data = await pageRecord(query)
-    list.value = data.list
-    total.value = data.total
+    list.value = data.list; total.value = data.total
   } finally { loading.value = false }
 }
 
@@ -74,105 +71,89 @@ function onReset() {
   filterCat.value = []; dateRange.value = []; query.page = 1; load()
 }
 
-function resetForm() {
-  Object.assign(form, {
-    type: 0, amount: null, remark: '',
-    recordDate: new Date().toISOString().slice(0, 10),
-    catPath: [], imageBase64: '', imagePreview: '',
-  })
-}
-
+// ---- 手动记一笔 ----
 function openCreate() {
-  dialogTitle.value = '记一笔'; editingId.value = null; resetForm()
+  dialogTitle.value = '记一笔'; editingId.value = null
+  Object.assign(form, { type: 0, amount: null, remark: '', recordDate: new Date().toISOString().slice(0, 10), catPath: [] })
   dialogVisible.value = true
 }
-
 function openEdit(row) {
   dialogTitle.value = '编辑账单'; editingId.value = row.id
   Object.assign(form, {
     type: row.type, amount: row.amount, remark: row.remark || '',
     recordDate: row.recordDate, catPath: [row.parentCategoryId, row.categoryId],
-    imageBase64: '', imagePreview: '',
   })
-  // 编辑时若已有截图，拉来预览（编辑不改图）
-  if (row.hasImage === 1) {
-    getRecordImage(row.id).then((r) => { form.imagePreview = r.image }).catch(() => {})
-  }
   dialogVisible.value = true
 }
+function onTypeChange() { form.catPath = [] }
+async function onSubmit() {
+  await formRef.value.validate()
+  const payload = {
+    categoryId: form.catPath[form.catPath.length - 1], type: form.type,
+    amount: form.amount, remark: form.remark, recordDate: form.recordDate,
+  }
+  if (editingId.value) { await updateRecord(editingId.value, payload); ElMessage.success('修改成功') }
+  else { await createRecord(payload); ElMessage.success('记账成功') }
+  dialogVisible.value = false; load()
+}
+async function onDelete(row) {
+  await ElMessageBox.confirm('确定删除这条账单？', '提示', { type: 'warning' })
+  await deleteRecord(row.id); ElMessage.success('删除成功'); load()
+}
 
-// 选择截图 → 上传识别 → 预填
-async function onPickImage(uploadFile) {
+// ---- 截图记账 ----
+function openReco() {
+  recoImageB64.value = ''; recoImagePreview.value = ''; recoItems.value = []
+  recoVisible.value = true
+}
+async function onPickRecoImage(uploadFile) {
   const raw = uploadFile.raw || uploadFile
   recognizing.value = true
   try {
     const r = await recognizeRecord(raw)
     if (r.imageBase64) {
-      form.imageBase64 = r.imageBase64
-      form.imagePreview = 'data:image/jpeg;base64,' + r.imageBase64
+      recoImageB64.value = r.imageBase64
+      recoImagePreview.value = 'data:image/jpeg;base64,' + r.imageBase64
     }
-    if (r.recognized) {
-      if (r.type !== null && r.type !== undefined) form.type = r.type
-      if (r.amount !== null && r.amount !== undefined) form.amount = Number(r.amount)
-      if (r.recordDate) form.recordDate = r.recordDate
-      if (r.remark) form.remark = r.remark
-      if (r.categoryId && r.parentCategoryId) form.catPath = [r.parentCategoryId, r.categoryId]
-      ElMessage.success('已识别并预填，请核对后提交')
-    } else {
-      ElMessage.warning(r.message || '未能自动识别，请手动填写')
-    }
-  } catch (e) {
-    // 拦截器已提示
-  } finally {
-    recognizing.value = false
+    recoItems.value = (r.items || []).map((it) => ({
+      type: it.type ?? 0,
+      catPath: it.parentCategoryId && it.categoryId ? [it.parentCategoryId, it.categoryId] : [],
+      amount: it.amount != null ? Number(it.amount) : null,
+      recordDate: it.recordDate || new Date().toISOString().slice(0, 10),
+      remark: it.remark || '',
+    }))
+    if (r.recognized) ElMessage.success(`识别到 ${recoItems.value.length} 笔，请核对后记账`)
+    else ElMessage.warning(r.message || '未能自动识别，可手动添加')
+  } catch (e) { /* 拦截器已提示 */ } finally { recognizing.value = false }
+}
+function addRecoItem() {
+  recoItems.value.push({ type: 0, catPath: [], amount: null, recordDate: new Date().toISOString().slice(0, 10), remark: '' })
+}
+function removeRecoItem(i) { recoItems.value.splice(i, 1) }
+function onRecoTypeChange(item) { item.catPath = [] }
+
+async function onBatchSubmit() {
+  if (!recoItems.value.length) { ElMessage.warning('没有可记账的条目'); return }
+  for (const [i, it] of recoItems.value.entries()) {
+    if (!it.catPath || it.catPath.length < 2) { ElMessage.warning(`第 ${i + 1} 笔未选择二级分类`); return }
+    if (it.amount == null || it.amount <= 0) { ElMessage.warning(`第 ${i + 1} 笔金额无效`); return }
+    if (!it.recordDate) { ElMessage.warning(`第 ${i + 1} 笔未选择日期`); return }
   }
+  const records = recoItems.value.map((it) => ({
+    categoryId: it.catPath[it.catPath.length - 1], type: it.type,
+    amount: it.amount, remark: it.remark, recordDate: it.recordDate,
+  }))
+  await batchCreateRecord({ imageBase64: recoImageB64.value || null, records })
+  ElMessage.success(`已记账 ${records.length} 笔`)
+  recoVisible.value = false; load()
 }
 
-function removeImage() {
-  form.imageBase64 = ''; form.imagePreview = ''
-}
-
-function onTypeChange() { form.catPath = [] }
-
-async function onSubmit() {
-  await formRef.value.validate()
-  const categoryId = form.catPath[form.catPath.length - 1]
-  const payload = {
-    categoryId, type: form.type, amount: form.amount,
-    remark: form.remark, recordDate: form.recordDate,
-  }
-  if (editingId.value) {
-    await updateRecord(editingId.value, payload)
-    ElMessage.success('修改成功')
-  } else {
-    if (form.imageBase64) payload.imageBase64 = form.imageBase64
-    await createRecord(payload)
-    ElMessage.success('记账成功')
-  }
-  dialogVisible.value = false
-  load()
-}
-
-async function onDelete(row) {
-  await ElMessageBox.confirm('确定删除这条账单？', '提示', { type: 'warning' })
-  await deleteRecord(row.id)
-  ElMessage.success('删除成功')
-  load()
-}
-
-// 点击行 → 详情
+// ---- 详情 ----
 async function openDetail(row) {
-  detail.value = row
-  detailImage.value = ''
-  detailVisible.value = true
+  detail.value = row; detailImage.value = ''; detailVisible.value = true
   if (row.hasImage === 1) {
     detailImgLoading.value = true
-    try {
-      const r = await getRecordImage(row.id)
-      detailImage.value = r.image
-    } catch { /* ignore */ } finally {
-      detailImgLoading.value = false
-    }
+    try { detailImage.value = (await getRecordImage(row.id)).image } catch { /* */ } finally { detailImgLoading.value = false }
   }
 }
 
@@ -181,19 +162,18 @@ onMounted(() => { loadTree(); load() })
 
 <template>
   <el-card>
-    <!-- 筛选栏 -->
     <div class="filter-bar">
-      <el-select v-model="query.type" placeholder="全部类型" clearable style="width: 120px">
-        <el-option label="支出" :value="0" />
-        <el-option label="收入" :value="1" />
+      <el-select v-model="query.type" placeholder="全部类型" clearable style="width: 110px">
+        <el-option label="支出" :value="0" /><el-option label="收入" :value="1" />
       </el-select>
       <el-cascader v-model="filterCat" :options="tree" :props="filterCascaderProps"
-        placeholder="全部分类" clearable style="width: 240px" @change="onFilterCatChange" />
+        placeholder="全部分类" clearable style="width: 220px" @change="onFilterCatChange" />
       <el-date-picker v-model="dateRange" type="daterange" range-separator="至"
-        start-placeholder="开始日期" end-placeholder="结束日期" value-format="YYYY-MM-DD" style="width: 240px" />
+        start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width: 230px" />
       <el-button type="primary" @click="onSearch">查询</el-button>
       <el-button @click="onReset">重置</el-button>
-      <el-button type="success" style="margin-left: auto" @click="openCreate">记一笔</el-button>
+      <el-button type="warning" style="margin-left: auto" @click="openReco">截图记账</el-button>
+      <el-button type="success" @click="openCreate">记一笔</el-button>
     </div>
 
     <el-table v-loading="loading" :data="list" border stripe @row-click="openDetail" class="clickable">
@@ -226,30 +206,14 @@ onMounted(() => { loadTree(); load() })
     </el-table>
 
     <el-pagination class="pager" layout="total, prev, pager, next" :total="total"
-      :page-size="query.size" :current-page="query.page"
-      @current-change="(p) => { query.page = p; load() }" />
+      :page-size="query.size" :current-page="query.page" @current-change="(p) => { query.page = p; load() }" />
 
-    <!-- 记账弹窗 -->
+    <!-- 手动记一笔 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="460px">
-      <!-- 截图识别（仅新增时可上传） -->
-      <div v-if="!editingId" class="upload-area">
-        <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onPickImage">
-          <el-button type="primary" plain :loading="recognizing" :icon="recognizing ? '' : 'UploadFilled'">
-            {{ recognizing ? '识别中…' : '上传截图自动识别' }}
-          </el-button>
-        </el-upload>
-        <span class="upload-tip">支付宝/微信/银行/淘宝/拼多多等截图，自动填金额、日期、分类</span>
-      </div>
-      <div v-if="form.imagePreview" class="preview">
-        <el-image :src="form.imagePreview" fit="contain" style="max-height: 180px" :preview-src-list="[form.imagePreview]" />
-        <el-button v-if="!editingId" link type="danger" size="small" @click="removeImage">移除</el-button>
-      </div>
-
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
         <el-form-item label="类型" prop="type">
           <el-radio-group v-model="form.type" @change="onTypeChange">
-            <el-radio :value="0">支出</el-radio>
-            <el-radio :value="1">收入</el-radio>
+            <el-radio :value="0">支出</el-radio><el-radio :value="1">收入</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="分类" prop="catPath">
@@ -272,7 +236,55 @@ onMounted(() => { loadTree(); load() })
       </template>
     </el-dialog>
 
-    <!-- 详情弹窗 -->
+    <!-- 截图记账（多笔复核） -->
+    <el-dialog v-model="recoVisible" title="截图记账" width="720px">
+      <div class="reco-top">
+        <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onPickRecoImage">
+          <el-button type="primary" plain :loading="recognizing">
+            {{ recognizing ? '识别中…' : '上传截图自动识别' }}
+          </el-button>
+        </el-upload>
+        <span class="tip">支付宝/微信/银行/淘宝/拼多多/个税等；一张图可能识别出多笔（如个税=收入+个税支出）</span>
+      </div>
+
+      <div class="reco-body">
+        <div v-if="recoImagePreview" class="reco-img">
+          <el-image :src="recoImagePreview" fit="contain" :preview-src-list="[recoImagePreview]" style="max-height: 360px" />
+        </div>
+        <div class="reco-items">
+          <div v-if="!recoItems.length" class="empty">上传截图后，识别出的多笔交易会列在这里，可逐笔核对修改。</div>
+          <div v-for="(it, i) in recoItems" :key="i" class="item">
+            <div class="item-hd">
+              <span>第 {{ i + 1 }} 笔</span>
+              <el-button link type="danger" size="small" @click="removeRecoItem(i)">移除</el-button>
+            </div>
+            <div class="item-row">
+              <el-radio-group v-model="it.type" size="small" @change="onRecoTypeChange(it)">
+                <el-radio-button :value="0">支出</el-radio-button>
+                <el-radio-button :value="1">收入</el-radio-button>
+              </el-radio-group>
+              <el-input-number v-model="it.amount" :min="0.01" :precision="2" :step="1" size="small" style="width: 130px" />
+            </div>
+            <div class="item-row">
+              <el-cascader v-model="it.catPath" :options="catOptionsFor(it.type)" :props="cascaderProps"
+                placeholder="一级 / 二级分类" size="small" style="flex: 1" />
+              <el-date-picker v-model="it.recordDate" type="date" value-format="YYYY-MM-DD" size="small" style="width: 150px" />
+            </div>
+            <el-input v-model="it.remark" size="small" placeholder="备注" />
+          </div>
+          <el-button v-if="recoItems.length" link type="primary" size="small" @click="addRecoItem">+ 再加一笔</el-button>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="recoVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!recoItems.length" @click="onBatchSubmit">
+          确认记账（{{ recoItems.length }} 笔）
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 详情 -->
     <el-dialog v-model="detailVisible" title="账单详情" width="480px">
       <el-descriptions :column="1" border>
         <el-descriptions-item label="日期">{{ detail.recordDate }}</el-descriptions-item>
@@ -287,8 +299,7 @@ onMounted(() => { loadTree(); load() })
       </el-descriptions>
       <div class="detail-img">
         <div v-if="detailImgLoading">截图加载中…</div>
-        <el-image v-else-if="detailImage" :src="detailImage" fit="contain"
-          style="max-width: 100%" :preview-src-list="[detailImage]" />
+        <el-image v-else-if="detailImage" :src="detailImage" fit="contain" style="max-width: 100%" :preview-src-list="[detailImage]" />
         <div v-else-if="detail.hasImage !== 1" class="no-img">（无截图）</div>
       </div>
     </el-dialog>
@@ -296,14 +307,20 @@ onMounted(() => { loadTree(); load() })
 </template>
 
 <style scoped>
-.filter-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.filter-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .sep { color: #c0c4cc; margin: 0 2px; }
 .clip { color: #909399; margin-left: 4px; vertical-align: middle; }
 .clickable :deep(.el-table__row) { cursor: pointer; }
 .pager { margin-top: 16px; justify-content: flex-end; }
-.upload-area { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.upload-tip { font-size: 12px; color: #909399; }
-.preview { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+.reco-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.tip { font-size: 12px; color: #909399; }
+.reco-body { display: flex; gap: 16px; }
+.reco-img { width: 280px; flex-shrink: 0; text-align: center; }
+.reco-items { flex: 1; max-height: 420px; overflow-y: auto; }
+.empty { color: #909399; font-size: 13px; padding: 20px 0; }
+.item { border: 1px solid #ebeef5; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+.item-hd { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #606266; margin-bottom: 8px; }
+.item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .detail-img { margin-top: 14px; text-align: center; }
 .no-img { color: #909399; font-size: 13px; }
 </style>

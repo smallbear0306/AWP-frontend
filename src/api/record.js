@@ -9,6 +9,11 @@ export function createRecord(data) {
   return request.post('/record', data)
 }
 
+/** 批量创建（一张截图多笔）。data: { imageBase64, records:[...] } */
+export function batchCreateRecord(data) {
+  return request.post('/record/batch', data)
+}
+
 export function updateRecord(id, data) {
   return request.put(`/record/${id}`, data)
 }
