@@ -43,6 +43,10 @@ function onLogout() {
             <el-icon><List /></el-icon>
             <span>账单</span>
           </el-menu-item>
+          <el-menu-item index="/account">
+            <el-icon><Wallet /></el-icon>
+            <span>账户</span>
+          </el-menu-item>
           <el-menu-item index="/category">
             <el-icon><Collection /></el-icon>
             <span>分类管理</span>

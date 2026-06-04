@@ -6,11 +6,14 @@ import {
   recognizeRecord, batchCreateRecord, getRecordImage,
 } from '@/api/record'
 import { getCategoryTree } from '@/api/category'
+import { listAccount } from '@/api/account'
 
 const loading = ref(false)
 const list = ref([])
 const total = ref(0)
 const tree = ref([])
+const accounts = ref([])
+const defaultAccountId = () => (accounts.value[0] ? accounts.value[0].id : null)
 
 const query = reactive({
   page: 1, size: 10, type: null, categoryId: null, parentCategoryId: null, startDate: null, endDate: null,
@@ -25,8 +28,9 @@ const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const editingId = ref(null)
 const formRef = ref()
-const form = reactive({ type: 0, amount: null, remark: '', recordDate: '', catPath: [] })
+const form = reactive({ accountId: null, type: 0, amount: null, remark: '', recordDate: '', catPath: [] })
 const rules = {
+  accountId: [{ required: true, message: '请选择账户', trigger: 'change' }],
   catPath: [{ required: true, message: '请选择分类', trigger: 'change' }],
   amount: [{ required: true, message: '请输入金额', trigger: 'blur' }],
   recordDate: [{ required: true, message: '请选择日期', trigger: 'change' }],
@@ -48,6 +52,7 @@ const detailImage = ref('')
 const detailImgLoading = ref(false)
 
 async function loadTree() { tree.value = await getCategoryTree() }
+async function loadAccounts() { accounts.value = await listAccount() }
 
 async function load() {
   loading.value = true
@@ -74,13 +79,13 @@ function onReset() {
 // ---- 手动记一笔 ----
 function openCreate() {
   dialogTitle.value = '记一笔'; editingId.value = null
-  Object.assign(form, { type: 0, amount: null, remark: '', recordDate: new Date().toISOString().slice(0, 10), catPath: [] })
+  Object.assign(form, { accountId: defaultAccountId(), type: 0, amount: null, remark: '', recordDate: new Date().toISOString().slice(0, 10), catPath: [] })
   dialogVisible.value = true
 }
 function openEdit(row) {
   dialogTitle.value = '编辑账单'; editingId.value = row.id
   Object.assign(form, {
-    type: row.type, amount: row.amount, remark: row.remark || '',
+    accountId: row.accountId, type: row.type, amount: row.amount, remark: row.remark || '',
     recordDate: row.recordDate, catPath: [row.parentCategoryId, row.categoryId],
   })
   dialogVisible.value = true
@@ -89,6 +94,7 @@ function onTypeChange() { form.catPath = [] }
 async function onSubmit() {
   await formRef.value.validate()
   const payload = {
+    accountId: form.accountId,
     categoryId: form.catPath[form.catPath.length - 1], type: form.type,
     amount: form.amount, remark: form.remark, recordDate: form.recordDate,
   }
@@ -116,6 +122,7 @@ async function onPickRecoImage(uploadFile) {
       recoImagePreview.value = 'data:image/jpeg;base64,' + r.imageBase64
     }
     recoItems.value = (r.items || []).map((it) => ({
+      accountId: defaultAccountId(),
       type: it.type ?? 0,
       catPath: it.parentCategoryId && it.categoryId ? [it.parentCategoryId, it.categoryId] : [],
       amount: it.amount != null ? Number(it.amount) : null,
@@ -127,7 +134,7 @@ async function onPickRecoImage(uploadFile) {
   } catch (e) { /* 拦截器已提示 */ } finally { recognizing.value = false }
 }
 function addRecoItem() {
-  recoItems.value.push({ type: 0, catPath: [], amount: null, recordDate: new Date().toISOString().slice(0, 10), remark: '' })
+  recoItems.value.push({ accountId: defaultAccountId(), type: 0, catPath: [], amount: null, recordDate: new Date().toISOString().slice(0, 10), remark: '' })
 }
 function removeRecoItem(i) { recoItems.value.splice(i, 1) }
 function onRecoTypeChange(item) { item.catPath = [] }
@@ -135,11 +142,13 @@ function onRecoTypeChange(item) { item.catPath = [] }
 async function onBatchSubmit() {
   if (!recoItems.value.length) { ElMessage.warning('没有可记账的条目'); return }
   for (const [i, it] of recoItems.value.entries()) {
+    if (!it.accountId) { ElMessage.warning(`第 ${i + 1} 笔未选择账户`); return }
     if (!it.catPath || it.catPath.length < 2) { ElMessage.warning(`第 ${i + 1} 笔未选择二级分类`); return }
     if (it.amount == null || it.amount <= 0) { ElMessage.warning(`第 ${i + 1} 笔金额无效`); return }
     if (!it.recordDate) { ElMessage.warning(`第 ${i + 1} 笔未选择日期`); return }
   }
   const records = recoItems.value.map((it) => ({
+    accountId: it.accountId,
     categoryId: it.catPath[it.catPath.length - 1], type: it.type,
     amount: it.amount, remark: it.remark, recordDate: it.recordDate,
   }))
@@ -157,7 +166,7 @@ async function openDetail(row) {
   }
 }
 
-onMounted(() => { loadTree(); load() })
+onMounted(() => { loadTree(); loadAccounts(); load() })
 </script>
 
 <template>
@@ -211,6 +220,11 @@ onMounted(() => { loadTree(); load() })
     <!-- 手动记一笔 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="460px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
+        <el-form-item label="账户" prop="accountId">
+          <el-select v-model="form.accountId" placeholder="选择账户" style="width: 100%">
+            <el-option v-for="a in accounts" :key="a.id" :label="a.name" :value="a.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="类型" prop="type">
           <el-radio-group v-model="form.type" @change="onTypeChange">
             <el-radio :value="0">支出</el-radio><el-radio :value="1">收入</el-radio>
@@ -266,8 +280,13 @@ onMounted(() => { loadTree(); load() })
               <el-input-number v-model="it.amount" :min="0.01" :precision="2" :step="1" size="small" style="width: 130px" />
             </div>
             <div class="item-row">
+              <el-select v-model="it.accountId" placeholder="账户" size="small" style="width: 150px">
+                <el-option v-for="a in accounts" :key="a.id" :label="a.name" :value="a.id" />
+              </el-select>
               <el-cascader v-model="it.catPath" :options="catOptionsFor(it.type)" :props="cascaderProps"
                 placeholder="一级 / 二级分类" size="small" style="flex: 1" />
+            </div>
+            <div class="item-row">
               <el-date-picker v-model="it.recordDate" type="date" value-format="YYYY-MM-DD" size="small" style="width: 150px" />
             </div>
             <el-input v-model="it.remark" size="small" placeholder="备注" />
@@ -288,6 +307,7 @@ onMounted(() => { loadTree(); load() })
     <el-dialog v-model="detailVisible" title="账单详情" width="480px">
       <el-descriptions :column="1" border>
         <el-descriptions-item label="日期">{{ detail.recordDate }}</el-descriptions-item>
+        <el-descriptions-item label="账户">{{ detail.accountName || '—' }}</el-descriptions-item>
         <el-descriptions-item label="分类">{{ detail.parentCategoryName }} / {{ detail.categoryName }}</el-descriptions-item>
         <el-descriptions-item label="类型">{{ detail.type === 1 ? '收入' : '支出' }}</el-descriptions-item>
         <el-descriptions-item label="金额">
