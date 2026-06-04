@@ -1,7 +1,13 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listAccount, createAccount, updateAccount, deleteAccount, setAccountBalance } from '@/api/account'
+import {
+  listAccount, createAccount, updateAccount, deleteAccount, setAccountBalance,
+  listDebt, createDebt, updateDebt, deleteDebt,
+} from '@/api/account'
+
+const DEBT_STATUS = { 0: '未还款', 1: '已还款', 2: '已逾期' }
+const STATUS_TAG = { 0: 'warning', 1: 'success', 2: 'danger' }
 
 const TYPES = ['储蓄卡', '信用卡', '支付宝余额', '微信余额', '花呗', '余额宝', '零钱通', '理财账户', '饭卡', '现金', '其他']
 
@@ -27,6 +33,14 @@ const rules = {
 const balDialog = ref(false)
 const balTarget = ref(null)
 const balValue = ref(0)
+
+// 负债管理
+const debtDialog = ref(false)
+const debtAccount = ref(null)
+const debts = ref([])
+const debtEditId = ref(null)
+const debtForm = reactive({ name: '', amount: null, type: 0, status: 0, dueDate: null, remark: '' })
+const debtFormVisible = ref(false)
 
 async function load() {
   loading.value = true
@@ -66,6 +80,43 @@ async function onBalanceSubmit() {
   await setAccountBalance(balTarget.value.id, balValue.value)
   ElMessage.success('划账成功')
   balDialog.value = false; load()
+}
+
+// ---- 负债 ----
+async function openDebts(a) {
+  debtAccount.value = a; debtFormVisible.value = false
+  debts.value = await listDebt(a.id)
+  debtDialog.value = true
+}
+function openDebtCreate() {
+  debtEditId.value = null
+  Object.assign(debtForm, { name: '', amount: null, type: 0, status: 0, dueDate: null, remark: '' })
+  debtFormVisible.value = true
+}
+function openDebtEdit(d) {
+  debtEditId.value = d.id
+  Object.assign(debtForm, { name: d.name || '', amount: Number(d.amount), type: d.type, status: d.status, dueDate: d.dueDate, remark: d.remark || '' })
+  debtFormVisible.value = true
+}
+async function onDebtSubmit() {
+  if (debtForm.amount == null || debtForm.amount <= 0) { ElMessage.warning('请输入金额'); return }
+  const payload = { accountId: debtAccount.value.id, ...debtForm }
+  if (debtEditId.value) { await updateDebt(debtEditId.value, payload); ElMessage.success('已保存') }
+  else { await createDebt(payload); ElMessage.success('已添加') }
+  debtFormVisible.value = false
+  debts.value = await listDebt(debtAccount.value.id)
+  load() // 刷新存额
+}
+async function onDebtDelete(d) {
+  await ElMessageBox.confirm('确定删除这条负债？', '提示', { type: 'warning' })
+  await deleteDebt(d.id)
+  debts.value = await listDebt(debtAccount.value.id)
+  load()
+}
+async function quickStatus(d, status) {
+  await updateDebt(d.id, { accountId: debtAccount.value.id, name: d.name, amount: Number(d.amount), type: d.type, status, dueDate: d.dueDate, remark: d.remark })
+  debts.value = await listDebt(debtAccount.value.id)
+  load()
 }
 
 onMounted(load)
@@ -108,9 +159,10 @@ onMounted(load)
             <span :style="{ color: Number(row.netAmount) < 0 ? '#f56c6c' : '#303133', fontWeight: 'bold' }">{{ Number(row.netAmount).toFixed(2) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200">
+        <el-table-column label="操作" width="260">
           <template #default="{ row }">
             <el-button link type="primary" @click="openBalance(row)">划账</el-button>
+            <el-button link type="warning" @click="openDebts(row)">负债</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" @click="onDelete(row)">删除</el-button>
           </template>
@@ -145,6 +197,64 @@ onMounted(load)
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="onSubmit">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 负债管理 -->
+    <el-dialog v-model="debtDialog" :title="`负债管理 · ${debtAccount?.name || ''}`" width="620px">
+      <div class="toolbar">
+        <span class="hint">存额 = 余额 − 未还款/已逾期负债；已还款不计入</span>
+        <el-button type="primary" size="small" @click="openDebtCreate">添加负债</el-button>
+      </div>
+      <el-table :data="debts" border size="small">
+        <el-table-column prop="name" label="说明" min-width="110" />
+        <el-table-column label="金额" width="100">
+          <template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">{{ row.type === 1 ? '按月还款' : '一次性' }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="STATUS_TAG[row.status]">{{ DEBT_STATUS[row.status] }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="dueDate" label="到期" width="110" />
+        <el-table-column label="操作" width="150">
+          <template #default="{ row }">
+            <el-button v-if="row.status !== 1" link type="success" size="small" @click="quickStatus(row, 1)">已还</el-button>
+            <el-button link type="primary" size="small" @click="openDebtEdit(row)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="onDebtDelete(row)">删</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- 负债表单 -->
+      <div v-if="debtFormVisible" class="debt-form">
+        <el-divider>{{ debtEditId ? '编辑负债' : '添加负债' }}</el-divider>
+        <el-form :model="debtForm" label-width="70px" size="small">
+          <el-form-item label="说明"><el-input v-model="debtForm.name" placeholder="如：花呗账单、车贷" /></el-form-item>
+          <el-form-item label="金额"><el-input-number v-model="debtForm.amount" :min="0.01" :precision="2" :step="100" style="width: 100%" /></el-form-item>
+          <el-form-item label="类型">
+            <el-radio-group v-model="debtForm.type">
+              <el-radio :value="0">一次性</el-radio><el-radio :value="1">按月还款</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-radio-group v-model="debtForm.status">
+              <el-radio :value="0">未还款</el-radio><el-radio :value="1">已还款</el-radio><el-radio :value="2">已逾期</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="到期日"><el-date-picker v-model="debtForm.dueDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+          <el-form-item label="备注"><el-input v-model="debtForm.remark" /></el-form-item>
+          <div style="text-align:right">
+            <el-button size="small" @click="debtFormVisible = false">取消</el-button>
+            <el-button size="small" type="primary" @click="onDebtSubmit">保存</el-button>
+          </div>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="debtDialog = false">关闭</el-button>
       </template>
     </el-dialog>
 

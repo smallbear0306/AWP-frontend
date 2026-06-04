@@ -21,3 +21,17 @@ export function deleteAccount(id) {
 export function setAccountBalance(id, balance) {
   return request.put(`/account/${id}/balance`, { balance })
 }
+
+/** 某账户的负债列表 */
+export function listDebt(accountId) {
+  return request.get('/debt', { params: { accountId } })
+}
+export function createDebt(data) {
+  return request.post('/debt', data)
+}
+export function updateDebt(id, data) {
+  return request.put(`/debt/${id}`, data)
+}
+export function deleteDebt(id) {
+  return request.delete(`/debt/${id}`)
+}
