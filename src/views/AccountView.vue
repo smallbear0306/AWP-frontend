@@ -1,10 +1,13 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  listAccount, createAccount, updateAccount, deleteAccount, setAccountBalance,
+  listAccount, createAccount, batchCreateAccount, updateAccount, deleteAccount, setAccountBalance,
   recognizeAccount, listDebt, createDebt, updateDebt, deleteDebt,
 } from '@/api/account'
+
+const router = useRouter()
 
 const DEBT_STATUS = { 0: '未还款', 1: '已还款', 2: '已逾期' }
 const STATUS_TAG = { 0: 'warning', 1: 'success', 2: 'danger' }
@@ -31,6 +34,33 @@ const rules = {
 
 const recognizing = ref(false)
 
+// 截图导入账户（多条复核）
+const importDialog = ref(false)
+const importItems = ref([]) // [{name,type,bank,kind,balance}]
+function openImport() { importItems.value = []; importDialog.value = true }
+async function onImportPick(uploadFile) {
+  recognizing.value = true
+  try {
+    const r = await recognizeAccount(uploadFile.raw || uploadFile)
+    importItems.value = (r.items || []).map((it) => ({
+      name: it.name || '', type: it.type || '储蓄卡', bank: it.bank || '',
+      kind: it.kind ?? 0, balance: it.balance != null ? Number(it.balance) : 0,
+    }))
+    if (r.recognized) ElMessage.success(`识别到 ${importItems.value.length} 个账户，请核对`)
+    else ElMessage.warning(r.message || '未能识别，可手动添加')
+  } catch { /* */ } finally { recognizing.value = false }
+}
+function removeImportItem(i) { importItems.value.splice(i, 1) }
+async function onImportSubmit() {
+  if (!importItems.value.length) { ElMessage.warning('没有可创建的账户'); return }
+  for (const [i, it] of importItems.value.entries()) {
+    if (!it.name) { ElMessage.warning(`第 ${i + 1} 个账户名为空`); return }
+  }
+  await batchCreateAccount({ accounts: importItems.value })
+  ElMessage.success(`已创建 ${importItems.value.length} 个账户`)
+  importDialog.value = false; load()
+}
+
 // 划账
 const balDialog = ref(false)
 const balTarget = ref(null)
@@ -41,7 +71,7 @@ const debtDialog = ref(false)
 const debtAccount = ref(null)
 const debts = ref([])
 const debtEditId = ref(null)
-const debtForm = reactive({ name: '', amount: null, type: 0, status: 0, dueDate: null, remark: '' })
+const debtForm = reactive({ name: '', amount: null, type: 0, months: null, status: 0, dueDate: null, remark: '' })
 const debtFormVisible = ref(false)
 
 async function load() {
@@ -75,36 +105,20 @@ async function onDelete(a) {
   await deleteAccount(a.id); ElMessage.success('删除成功'); load()
 }
 
-// 截图识别（新建账户预填）
-async function onRecoCreate(uploadFile) {
-  recognizing.value = true
-  try {
-    const r = await recognizeAccount(uploadFile.raw || uploadFile)
-    if (r.recognized) {
-      if (r.name) form.name = r.name
-      if (r.type) form.type = r.type
-      if (r.bank) form.bank = r.bank
-      if (r.kind != null) form.kind = r.kind
-      if (r.balance != null) form.balance = Number(r.balance)
-      ElMessage.success('已识别并预填，请核对')
-    } else {
-      ElMessage.warning(r.message || '未能识别，请手动填写')
-    }
-  } catch { /* 拦截器已提示 */ } finally { recognizing.value = false }
-}
-
 function openBalance(a) {
   balTarget.value = a; balValue.value = Number(a.balance); balDialog.value = true
 }
-// 截图识别（划账预填余额）
+// 截图识别（划账预填余额，取识别到的第一个账户余额）
 async function onRecoBalance(uploadFile) {
   recognizing.value = true
   try {
     const r = await recognizeAccount(uploadFile.raw || uploadFile)
-    if (r.recognized && r.balance != null) { balValue.value = Number(r.balance); ElMessage.success('已识别余额，请核对') }
+    const it = (r.items || [])[0]
+    if (r.recognized && it && it.balance != null) { balValue.value = Number(it.balance); ElMessage.success('已识别余额，请核对') }
     else ElMessage.warning('未识别到余额，请手动填写')
   } catch { /* */ } finally { recognizing.value = false }
 }
+function goDetail(a) { router.push(`/account/${a.id}`) }
 async function onBalanceSubmit() {
   await setAccountBalance(balTarget.value.id, balValue.value)
   ElMessage.success('划账成功')
@@ -119,12 +133,12 @@ async function openDebts(a) {
 }
 function openDebtCreate() {
   debtEditId.value = null
-  Object.assign(debtForm, { name: '', amount: null, type: 0, status: 0, dueDate: null, remark: '' })
+  Object.assign(debtForm, { name: '', amount: null, type: 0, months: null, status: 0, dueDate: null, remark: '' })
   debtFormVisible.value = true
 }
 function openDebtEdit(d) {
   debtEditId.value = d.id
-  Object.assign(debtForm, { name: d.name || '', amount: Number(d.amount), type: d.type, status: d.status, dueDate: d.dueDate, remark: d.remark || '' })
+  Object.assign(debtForm, { name: d.name || '', amount: Number(d.amount), type: d.type, months: d.months, status: d.status, dueDate: d.dueDate, remark: d.remark || '' })
   debtFormVisible.value = true
 }
 async function onDebtSubmit() {
@@ -143,7 +157,7 @@ async function onDebtDelete(d) {
   load()
 }
 async function quickStatus(d, status) {
-  await updateDebt(d.id, { accountId: debtAccount.value.id, name: d.name, amount: Number(d.amount), type: d.type, status, dueDate: d.dueDate, remark: d.remark })
+  await updateDebt(d.id, { accountId: debtAccount.value.id, name: d.name, amount: Number(d.amount), type: d.type, months: d.months, status, dueDate: d.dueDate, remark: d.remark })
   debts.value = await listDebt(debtAccount.value.id)
   load()
 }
@@ -162,10 +176,13 @@ onMounted(load)
 
     <el-card>
       <div class="toolbar">
-        <span class="hint">余额由记账自动增减；长期未更新可用「划账」按真实余额校正</span>
-        <el-button type="primary" @click="openCreate">新建账户</el-button>
+        <span class="hint">点账户行看详情；余额由记账自动增减，长期未更新可用「划账」校正</span>
+        <span>
+          <el-button type="warning" plain @click="openImport">截图导入账户</el-button>
+          <el-button type="primary" @click="openCreate">新建账户</el-button>
+        </span>
       </div>
-      <el-table :data="list" border stripe>
+      <el-table :data="list" border stripe @row-click="goDetail" class="clickable">
         <el-table-column prop="name" label="账户" min-width="130" />
         <el-table-column label="类型" width="150">
           <template #default="{ row }">
@@ -190,10 +207,10 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="操作" width="260">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openBalance(row)">划账</el-button>
-            <el-button link type="warning" @click="openDebts(row)">负债</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-button link type="primary" @click.stop="openBalance(row)">划账</el-button>
+            <el-button link type="warning" @click.stop="openDebts(row)">负债</el-button>
+            <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" @click.stop="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -201,12 +218,6 @@ onMounted(load)
 
     <!-- 新建/编辑 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="440px">
-      <div v-if="!editingId" class="reco-line">
-        <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onRecoCreate">
-          <el-button size="small" type="primary" plain :loading="recognizing">上传截图自动识别</el-button>
-        </el-upload>
-        <span class="hint">上传支付宝/微信/银行卡余额截图，自动填类型与余额</span>
-      </div>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="账户名" prop="name">
           <el-input v-model="form.name" placeholder="如：招行储蓄卡、我的支付宝" />
@@ -235,6 +246,40 @@ onMounted(load)
       </template>
     </el-dialog>
 
+    <!-- 截图导入账户（多条复核） -->
+    <el-dialog v-model="importDialog" title="截图导入账户" width="680px">
+      <div class="reco-line">
+        <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onImportPick">
+          <el-button type="primary" plain :loading="recognizing">上传截图自动识别</el-button>
+        </el-upload>
+        <span class="hint">银行总览/钱包截图，一张图可识别出多个账户，可逐个核对修改</span>
+      </div>
+      <div v-if="!importItems.length" class="empty-tip">上传后识别到的账户会列在这里。</div>
+      <div v-for="(it, i) in importItems" :key="i" class="imp-item">
+        <div class="imp-row">
+          <el-input v-model="it.name" size="small" placeholder="账户名" style="flex:1" />
+          <el-button link type="danger" size="small" @click="removeImportItem(i)">移除</el-button>
+        </div>
+        <div class="imp-row">
+          <el-select v-model="it.type" size="small" style="width:130px">
+            <el-option v-for="t in TYPES" :key="t" :label="t" :value="t" />
+          </el-select>
+          <el-input v-model="it.bank" size="small" placeholder="银行(可选)" style="width:120px" />
+          <el-radio-group v-model="it.kind" size="small">
+            <el-radio-button :value="0">储蓄</el-radio-button>
+            <el-radio-button :value="1">信用</el-radio-button>
+          </el-radio-group>
+          <el-input-number v-model="it.balance" :precision="2" :step="100" size="small" style="width:140px" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="importDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!importItems.length" @click="onImportSubmit">
+          创建（{{ importItems.length }} 个）
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 负债管理 -->
     <el-dialog v-model="debtDialog" :title="`负债管理 · ${debtAccount?.name || ''}`" width="620px">
       <div class="toolbar">
@@ -246,8 +291,11 @@ onMounted(load)
         <el-table-column label="金额" width="100">
           <template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template>
         </el-table-column>
-        <el-table-column label="类型" width="90">
-          <template #default="{ row }">{{ row.type === 1 ? '按月还款' : '一次性' }}</template>
+        <el-table-column label="类型" width="130">
+          <template #default="{ row }">
+            {{ row.type === 1 ? '按月还款' : '一次性' }}
+            <span v-if="row.type === 1 && row.months" class="months">· {{ row.months }}期</span>
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
@@ -274,6 +322,10 @@ onMounted(load)
             <el-radio-group v-model="debtForm.type">
               <el-radio :value="0">一次性</el-radio><el-radio :value="1">按月还款</el-radio>
             </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="debtForm.type === 1" label="贷款月数">
+            <el-input-number v-model="debtForm.months" :min="1" :step="1" :precision="0" style="width: 160px" />
+            <span v-if="debtForm.months && debtForm.amount" class="months">　每月约 {{ (Number(debtForm.amount) / debtForm.months).toFixed(2) }}</span>
           </el-form-item>
           <el-form-item label="状态">
             <el-radio-group v-model="debtForm.status">
@@ -320,4 +372,9 @@ onMounted(load)
 .hint { font-size: 12px; color: #909399; }
 .bal-tip { margin-bottom: 10px; color: #606266; font-size: 14px; }
 .reco-line { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.clickable :deep(.el-table__row) { cursor: pointer; }
+.empty-tip { color: #909399; font-size: 13px; padding: 16px 0; }
+.imp-item { border: 1px solid #ebeef5; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+.imp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.months { color: #909399; font-size: 12px; }
 </style>

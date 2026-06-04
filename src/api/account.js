@@ -9,6 +9,11 @@ export function createAccount(data) {
   return request.post('/account', data)
 }
 
+/** 批量创建账户。data: { accounts:[...] } */
+export function batchCreateAccount(data) {
+  return request.post('/account/batch', data)
+}
+
 export function updateAccount(id, data) {
   return request.put(`/account/${id}`, data)
 }

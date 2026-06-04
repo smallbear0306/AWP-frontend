@@ -23,6 +23,11 @@ const routes = [
         component: () => import('@/views/AccountView.vue'),
       },
       {
+        path: 'account/:id',
+        name: 'account-detail',
+        component: () => import('@/views/AccountDetailView.vue'),
+      },
+      {
         path: 'category',
         name: 'category',
         component: () => import('@/views/CategoryView.vue'),
