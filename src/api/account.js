@@ -47,3 +47,11 @@ export function updateDebt(id, data) {
 export function deleteDebt(id) {
   return request.delete(`/debt/${id}`)
 }
+/** 某负债的分期明细 */
+export function listInstallments(debtId) {
+  return request.get(`/debt/${debtId}/installments`)
+}
+/** 标记某一期状态 0未还/1已还/2逾期 */
+export function setInstallmentStatus(id, status) {
+  return request.put(`/debt/installment/${id}`, { status })
+}

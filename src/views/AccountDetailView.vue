@@ -63,13 +63,19 @@ onMounted(() => { loadAccount(); loadDebts(); loadRecords() })
     <el-card class="sec">
       <div class="sec-title">负债</div>
       <el-table :data="debts" border size="small" empty-text="无负债">
-        <el-table-column prop="name" label="说明" min-width="120" />
-        <el-table-column label="金额" width="110"><template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template></el-table-column>
-        <el-table-column label="类型" width="130">
-          <template #default="{ row }">{{ row.type === 1 ? '按月还款' : '一次性' }}<span v-if="row.type===1 && row.months" class="muted"> · {{ row.months }}期</span></template>
+        <el-table-column prop="name" label="说明" min-width="110" />
+        <el-table-column label="总额(本息)" min-width="130">
+          <template #default="{ row }">
+            {{ Number(row.total).toFixed(2) }}
+            <div class="muted-r">含息 {{ Number(row.interestTotal || 0).toFixed(2) }}</div>
+          </template>
         </el-table-column>
-        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag size="small" :type="STATUS_TAG[row.status]">{{ DEBT_STATUS[row.status] }}</el-tag></template></el-table-column>
-        <el-table-column prop="dueDate" label="到期" width="120" />
+        <el-table-column label="方式" width="130">
+          <template #default="{ row }">{{ row.type === 1 ? '按月还款' : '一次性' }}<span v-if="row.rate" class="muted"> · {{ Number(row.rate) }}%</span></template>
+        </el-table-column>
+        <el-table-column label="进度" width="100"><template #default="{ row }">{{ row.paidPeriods }}/{{ row.periods }} 期</template></el-table-column>
+        <el-table-column label="未结清" width="110"><template #default="{ row }"><span style="color:#f56c6c">{{ Number(row.outstanding).toFixed(2) }}</span></template></el-table-column>
+        <el-table-column prop="dueDate" label="首期" width="110" />
       </el-table>
     </el-card>
 
@@ -77,15 +83,15 @@ onMounted(() => { loadAccount(); loadDebts(); loadRecords() })
     <el-card class="sec">
       <div class="sec-title">余额变动记录</div>
       <div class="filter-bar">
-        <el-select v-model="query.type" style="width: 140px" @change="onSearch">
-          <el-option label="收入+支出" :value="null" />
-          <el-option label="只看收入" :value="1" />
-          <el-option label="只看支出" :value="0" />
-        </el-select>
-        <el-select v-model="query.sort" style="width: 150px" @change="onSearch">
-          <el-option label="时间（近→远）" value="date" />
-          <el-option label="金额（高→低）" value="amount" />
-        </el-select>
+        <el-radio-group v-model="query.type" @change="onSearch">
+          <el-radio-button :value="null">收入+支出</el-radio-button>
+          <el-radio-button :value="1">只看收入</el-radio-button>
+          <el-radio-button :value="0">只看支出</el-radio-button>
+        </el-radio-group>
+        <el-radio-group v-model="query.sort" @change="onSearch">
+          <el-radio-button value="date">时间近→远</el-radio-button>
+          <el-radio-button value="amount">金额高→低</el-radio-button>
+        </el-radio-group>
         <el-date-picker v-model="dateRange" type="daterange" range-separator="至"
           start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width: 230px"
           @change="onSearch" clearable />
@@ -126,4 +132,5 @@ onMounted(() => { loadAccount(); loadDebts(); loadRecords() })
 .filter-bar { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .pager { margin-top: 12px; justify-content: flex-end; }
 .muted { color: #909399; font-size: 12px; }
+.muted-r { color: #909399; font-size: 11px; text-align: right; }
 </style>

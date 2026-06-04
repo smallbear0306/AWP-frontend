@@ -5,12 +5,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listAccount, createAccount, batchCreateAccount, updateAccount, deleteAccount, setAccountBalance,
   recognizeAccount, listDebt, createDebt, updateDebt, deleteDebt,
+  listInstallments, setInstallmentStatus,
 } from '@/api/account'
 
 const router = useRouter()
 
-const DEBT_STATUS = { 0: '未还款', 1: '已还款', 2: '已逾期' }
-const STATUS_TAG = { 0: 'warning', 1: 'success', 2: 'danger' }
+const METHODS = { 0: '等额本息', 1: '等额本金', 2: '付息后一次还本', 3: '一次性还本息' }
+const INST_STATUS = { 0: '未还', 1: '已还', 2: '逾期' }
+const INST_TAG = { 0: 'warning', 1: 'success', 2: 'danger' }
 
 const TYPES = ['储蓄卡', '信用卡', '支付宝余额', '微信余额', '花呗', '余额宝', '零钱通', '理财账户', '饭卡', '现金', '其他']
 
@@ -71,8 +73,17 @@ const debtDialog = ref(false)
 const debtAccount = ref(null)
 const debts = ref([])
 const debtEditId = ref(null)
-const debtForm = reactive({ name: '', amount: null, type: 0, months: null, status: 0, dueDate: null, remark: '' })
+const debtForm = reactive({ name: '', amount: null, rate: 0, type: 0, months: null, repayMethod: 3, dueDate: null, remark: '' })
 const debtFormVisible = ref(false)
+// 分期明细
+const instDialog = ref(false)
+const instDebt = ref(null)
+const installments = ref([])
+// 还款方式可选项随类型变化：一次性只能"一次性还本息"；按月可选前三种
+const methodOptions = computed(() => debtForm.type === 0
+  ? [{ v: 3, l: '一次性还本息' }]
+  : [{ v: 0, l: '等额本息' }, { v: 1, l: '等额本金' }, { v: 2, l: '付息后一次还本' }])
+function onDebtTypeChange() { debtForm.repayMethod = debtForm.type === 0 ? 3 : 0 }
 
 async function load() {
   loading.value = true
@@ -133,31 +144,42 @@ async function openDebts(a) {
 }
 function openDebtCreate() {
   debtEditId.value = null
-  Object.assign(debtForm, { name: '', amount: null, type: 0, months: null, status: 0, dueDate: null, remark: '' })
+  Object.assign(debtForm, { name: '', amount: null, rate: 0, type: 0, months: null, repayMethod: 3, dueDate: null, remark: '' })
   debtFormVisible.value = true
 }
 function openDebtEdit(d) {
   debtEditId.value = d.id
-  Object.assign(debtForm, { name: d.name || '', amount: Number(d.amount), type: d.type, months: d.months, status: d.status, dueDate: d.dueDate, remark: d.remark || '' })
+  Object.assign(debtForm, {
+    name: d.name || '', amount: Number(d.principal), rate: d.rate != null ? Number(d.rate) : 0,
+    type: d.type, months: d.months, repayMethod: d.repayMethod, dueDate: d.dueDate, remark: d.remark || '',
+  })
   debtFormVisible.value = true
 }
 async function onDebtSubmit() {
-  if (debtForm.amount == null || debtForm.amount <= 0) { ElMessage.warning('请输入金额'); return }
+  if (debtForm.amount == null || debtForm.amount <= 0) { ElMessage.warning('请输入应还本金'); return }
+  if ((debtForm.months == null || debtForm.months < 1)) { ElMessage.warning('请输入期限/期数(月)'); return }
   const payload = { accountId: debtAccount.value.id, ...debtForm }
-  if (debtEditId.value) { await updateDebt(debtEditId.value, payload); ElMessage.success('已保存') }
+  if (debtEditId.value) { await updateDebt(debtEditId.value, payload); ElMessage.success('已保存（分期已重算）') }
   else { await createDebt(payload); ElMessage.success('已添加') }
   debtFormVisible.value = false
   debts.value = await listDebt(debtAccount.value.id)
   load() // 刷新存额
 }
 async function onDebtDelete(d) {
-  await ElMessageBox.confirm('确定删除这条负债？', '提示', { type: 'warning' })
+  await ElMessageBox.confirm('确定删除这条负债（含其分期）？', '提示', { type: 'warning' })
   await deleteDebt(d.id)
   debts.value = await listDebt(debtAccount.value.id)
   load()
 }
-async function quickStatus(d, status) {
-  await updateDebt(d.id, { accountId: debtAccount.value.id, name: d.name, amount: Number(d.amount), type: d.type, months: d.months, status, dueDate: d.dueDate, remark: d.remark })
+// 分期明细
+async function openInstallments(d) {
+  instDebt.value = d
+  installments.value = await listInstallments(d.id)
+  instDialog.value = true
+}
+async function toggleInstallment(it, status) {
+  await setInstallmentStatus(it.id, status)
+  installments.value = await listInstallments(instDebt.value.id)
   debts.value = await listDebt(debtAccount.value.id)
   load()
 }
@@ -287,25 +309,24 @@ onMounted(load)
         <el-button type="primary" size="small" @click="openDebtCreate">添加负债</el-button>
       </div>
       <el-table :data="debts" border size="small">
-        <el-table-column prop="name" label="说明" min-width="110" />
-        <el-table-column label="金额" width="100">
-          <template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template>
-        </el-table-column>
-        <el-table-column label="类型" width="130">
+        <el-table-column prop="name" label="说明" min-width="100" />
+        <el-table-column label="总额(本息)" min-width="130">
           <template #default="{ row }">
-            {{ row.type === 1 ? '按月还款' : '一次性' }}
-            <span v-if="row.type === 1 && row.months" class="months">· {{ row.months }}期</span>
+            {{ Number(row.total).toFixed(2) }}
+            <div class="months-r">含息 {{ Number(row.interestTotal || 0).toFixed(2) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="方式" width="135">
           <template #default="{ row }">
-            <el-tag size="small" :type="STATUS_TAG[row.status]">{{ DEBT_STATUS[row.status] }}</el-tag>
+            {{ row.type === 1 ? '按月' : '一次性' }} · {{ METHODS[row.repayMethod] }}
+            <span v-if="row.rate" class="months">· {{ Number(row.rate) }}%</span>
           </template>
         </el-table-column>
-        <el-table-column prop="dueDate" label="到期" width="110" />
-        <el-table-column label="操作" width="150">
+        <el-table-column label="进度" width="85"><template #default="{ row }">{{ row.paidPeriods }}/{{ row.periods }}期</template></el-table-column>
+        <el-table-column label="未结清" width="100"><template #default="{ row }"><span style="color:#f56c6c">{{ Number(row.outstanding).toFixed(2) }}</span></template></el-table-column>
+        <el-table-column label="操作" width="160">
           <template #default="{ row }">
-            <el-button v-if="row.status !== 1" link type="success" size="small" @click="quickStatus(row, 1)">已还</el-button>
+            <el-button link type="success" size="small" @click="openInstallments(row)">分期</el-button>
             <el-button link type="primary" size="small" @click="openDebtEdit(row)">编辑</el-button>
             <el-button link type="danger" size="small" @click="onDebtDelete(row)">删</el-button>
           </template>
@@ -314,25 +335,25 @@ onMounted(load)
 
       <!-- 负债表单 -->
       <div v-if="debtFormVisible" class="debt-form">
-        <el-divider>{{ debtEditId ? '编辑负债' : '添加负债' }}</el-divider>
-        <el-form :model="debtForm" label-width="70px" size="small">
-          <el-form-item label="说明"><el-input v-model="debtForm.name" placeholder="如：花呗账单、车贷" /></el-form-item>
-          <el-form-item label="金额"><el-input-number v-model="debtForm.amount" :min="0.01" :precision="2" :step="100" style="width: 100%" /></el-form-item>
+        <el-divider>{{ debtEditId ? '编辑负债（保存会重算分期）' : '添加负债' }}</el-divider>
+        <el-form :model="debtForm" label-width="80px" size="small">
+          <el-form-item label="说明"><el-input v-model="debtForm.name" placeholder="如：车贷、花呗分期" /></el-form-item>
+          <el-form-item label="应还本金"><el-input-number v-model="debtForm.amount" :min="0.01" :precision="2" :step="100" style="width: 100%" /></el-form-item>
+          <el-form-item label="年利率%"><el-input-number v-model="debtForm.rate" :min="0" :precision="2" :step="1" style="width: 160px" /><span class="months">　0 表示不计息</span></el-form-item>
           <el-form-item label="类型">
-            <el-radio-group v-model="debtForm.type">
+            <el-radio-group v-model="debtForm.type" @change="onDebtTypeChange">
               <el-radio :value="0">一次性</el-radio><el-radio :value="1">按月还款</el-radio>
             </el-radio-group>
           </el-form-item>
-          <el-form-item v-if="debtForm.type === 1" label="贷款月数">
+          <el-form-item :label="debtForm.type === 1 ? '期数(月)' : '期限(月)'">
             <el-input-number v-model="debtForm.months" :min="1" :step="1" :precision="0" style="width: 160px" />
-            <span v-if="debtForm.months && debtForm.amount" class="months">　每月约 {{ (Number(debtForm.amount) / debtForm.months).toFixed(2) }}</span>
           </el-form-item>
-          <el-form-item label="状态">
-            <el-radio-group v-model="debtForm.status">
-              <el-radio :value="0">未还款</el-radio><el-radio :value="1">已还款</el-radio><el-radio :value="2">已逾期</el-radio>
-            </el-radio-group>
+          <el-form-item label="还款方式">
+            <el-select v-model="debtForm.repayMethod" style="width: 100%">
+              <el-option v-for="o in methodOptions" :key="o.v" :label="o.l" :value="o.v" />
+            </el-select>
           </el-form-item>
-          <el-form-item label="到期日"><el-date-picker v-model="debtForm.dueDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+          <el-form-item :label="debtForm.type === 1 ? '首期还款日' : '到期日'"><el-date-picker v-model="debtForm.dueDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
           <el-form-item label="备注"><el-input v-model="debtForm.remark" /></el-form-item>
           <div style="text-align:right">
             <el-button size="small" @click="debtFormVisible = false">取消</el-button>
@@ -343,6 +364,26 @@ onMounted(load)
       <template #footer>
         <el-button @click="debtDialog = false">关闭</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 分期明细 -->
+    <el-dialog v-model="instDialog" :title="`分期明细 · ${instDebt?.name || ''}`" width="560px">
+      <el-table :data="installments" border size="small" max-height="420">
+        <el-table-column label="期" width="55"><template #default="{ row }">{{ row.period }}</template></el-table-column>
+        <el-table-column prop="dueDate" label="到期" width="115" />
+        <el-table-column label="本金" width="90"><template #default="{ row }">{{ Number(row.principal).toFixed(2) }}</template></el-table-column>
+        <el-table-column label="利息" width="90"><template #default="{ row }">{{ Number(row.interest).toFixed(2) }}</template></el-table-column>
+        <el-table-column label="应还" width="95"><template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template></el-table-column>
+        <el-table-column label="状态/操作" min-width="120">
+          <template #default="{ row }">
+            <el-tag size="small" :type="INST_TAG[row.status]">{{ INST_STATUS[row.status] }}</el-tag>
+            <el-button v-if="row.status !== 1" link type="success" size="small" @click="toggleInstallment(row, 1)">还</el-button>
+            <el-button v-else link type="info" size="small" @click="toggleInstallment(row, 0)">撤</el-button>
+            <el-button v-if="row.status !== 2" link type="danger" size="small" @click="toggleInstallment(row, 2)">逾期</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer><el-button @click="instDialog = false">关闭</el-button></template>
     </el-dialog>
 
     <!-- 划账 -->
@@ -377,4 +418,5 @@ onMounted(load)
 .imp-item { border: 1px solid #ebeef5; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
 .imp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .months { color: #909399; font-size: 12px; }
+.months-r { color: #909399; font-size: 11px; text-align: right; }
 </style>
