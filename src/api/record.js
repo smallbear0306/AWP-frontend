@@ -22,11 +22,12 @@ export function deleteRecord(id) {
   return request.delete(`/record/${id}`)
 }
 
-/** 上传截图识别（multipart），返回预填字段 + 压缩图 base64 */
+/** 上传截图识别（multipart），返回多笔预填 + 压缩图 base64。
+ * 识别走 3 轮模型调用，较慢，单独放宽超时到 60s。 */
 export function recognizeRecord(file) {
   const fd = new FormData()
   fd.append('file', file)
-  return request.post('/record/recognize', fd)
+  return request.post('/record/recognize', fd, { timeout: 60000 })
 }
 
 /** 取某账单的截图（data URL） */
