@@ -17,7 +17,7 @@ const list = ref([])
 const total = ref(0)
 const loading = ref(false)
 
-const query = reactive({ page: 1, size: 10, accountId, sort: 'date', startDate: null, endDate: null })
+const query = reactive({ page: 1, size: 10, accountId, type: null, sort: 'date', startDate: null, endDate: null })
 const dateRange = ref([])
 
 const netClass = computed(() => (account.value && Number(account.value.netAmount) < 0 ? 'neg' : ''))
@@ -77,12 +77,18 @@ onMounted(() => { loadAccount(); loadDebts(); loadRecords() })
     <el-card class="sec">
       <div class="sec-title">余额变动记录</div>
       <div class="filter-bar">
-        <el-date-picker v-model="dateRange" type="daterange" range-separator="至"
-          start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width: 230px" />
-        <el-select v-model="query.sort" style="width: 150px">
+        <el-select v-model="query.type" style="width: 140px" @change="onSearch">
+          <el-option label="收入+支出" :value="null" />
+          <el-option label="只看收入" :value="1" />
+          <el-option label="只看支出" :value="0" />
+        </el-select>
+        <el-select v-model="query.sort" style="width: 150px" @change="onSearch">
           <el-option label="时间（近→远）" value="date" />
           <el-option label="金额（高→低）" value="amount" />
         </el-select>
+        <el-date-picker v-model="dateRange" type="daterange" range-separator="至"
+          start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width: 230px"
+          @change="onSearch" clearable />
         <el-button type="primary" @click="onSearch">查询</el-button>
       </div>
       <el-table :data="list" border stripe size="small" empty-text="暂无记录">
