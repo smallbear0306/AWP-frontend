@@ -3,7 +3,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listAccount, createAccount, updateAccount, deleteAccount, setAccountBalance,
-  listDebt, createDebt, updateDebt, deleteDebt,
+  recognizeAccount, listDebt, createDebt, updateDebt, deleteDebt,
 } from '@/api/account'
 
 const DEBT_STATUS = { 0: '未还款', 1: '已还款', 2: '已逾期' }
@@ -28,6 +28,8 @@ const rules = {
   name: [{ required: true, message: '请输入账户名', trigger: 'blur' }],
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
 }
+
+const recognizing = ref(false)
 
 // 划账
 const balDialog = ref(false)
@@ -73,8 +75,35 @@ async function onDelete(a) {
   await deleteAccount(a.id); ElMessage.success('删除成功'); load()
 }
 
+// 截图识别（新建账户预填）
+async function onRecoCreate(uploadFile) {
+  recognizing.value = true
+  try {
+    const r = await recognizeAccount(uploadFile.raw || uploadFile)
+    if (r.recognized) {
+      if (r.name) form.name = r.name
+      if (r.type) form.type = r.type
+      if (r.bank) form.bank = r.bank
+      if (r.kind != null) form.kind = r.kind
+      if (r.balance != null) form.balance = Number(r.balance)
+      ElMessage.success('已识别并预填，请核对')
+    } else {
+      ElMessage.warning(r.message || '未能识别，请手动填写')
+    }
+  } catch { /* 拦截器已提示 */ } finally { recognizing.value = false }
+}
+
 function openBalance(a) {
   balTarget.value = a; balValue.value = Number(a.balance); balDialog.value = true
+}
+// 截图识别（划账预填余额）
+async function onRecoBalance(uploadFile) {
+  recognizing.value = true
+  try {
+    const r = await recognizeAccount(uploadFile.raw || uploadFile)
+    if (r.recognized && r.balance != null) { balValue.value = Number(r.balance); ElMessage.success('已识别余额，请核对') }
+    else ElMessage.warning('未识别到余额，请手动填写')
+  } catch { /* */ } finally { recognizing.value = false }
 }
 async function onBalanceSubmit() {
   await setAccountBalance(balTarget.value.id, balValue.value)
@@ -172,6 +201,12 @@ onMounted(load)
 
     <!-- 新建/编辑 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="440px">
+      <div v-if="!editingId" class="reco-line">
+        <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onRecoCreate">
+          <el-button size="small" type="primary" plain :loading="recognizing">上传截图自动识别</el-button>
+        </el-upload>
+        <span class="hint">上传支付宝/微信/银行卡余额截图，自动填类型与余额</span>
+      </div>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="账户名" prop="name">
           <el-input v-model="form.name" placeholder="如：招行储蓄卡、我的支付宝" />
@@ -262,6 +297,11 @@ onMounted(load)
     <el-dialog v-model="balDialog" title="划账 / 更新余额" width="380px">
       <p class="bal-tip">把「{{ balTarget?.name }}」的余额校正为真实值：</p>
       <el-input-number v-model="balValue" :precision="2" :step="100" style="width: 100%" />
+      <div class="reco-line" style="margin-top:10px">
+        <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onRecoBalance">
+          <el-button size="small" plain :loading="recognizing">上传余额截图识别</el-button>
+        </el-upload>
+      </div>
       <template #footer>
         <el-button @click="balDialog = false">取消</el-button>
         <el-button type="primary" @click="onBalanceSubmit">确定</el-button>
@@ -279,4 +319,5 @@ onMounted(load)
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .hint { font-size: 12px; color: #909399; }
 .bal-tip { margin-bottom: 10px; color: #606266; font-size: 14px; }
+.reco-line { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 </style>

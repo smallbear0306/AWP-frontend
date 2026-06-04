@@ -22,6 +22,13 @@ export function setAccountBalance(id, balance) {
   return request.put(`/account/${id}/balance`, { balance })
 }
 
+/** 截图识别账户类型/余额（multipart，识别较慢放宽超时） */
+export function recognizeAccount(file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return request.post('/account/recognize', fd, { timeout: 60000 })
+}
+
 /** 某账户的负债列表 */
 export function listDebt(accountId) {
   return request.get('/debt', { params: { accountId } })
