@@ -16,3 +16,15 @@ export function updateRecord(id, data) {
 export function deleteRecord(id) {
   return request.delete(`/record/${id}`)
 }
+
+/** 上传截图识别（multipart），返回预填字段 + 压缩图 base64 */
+export function recognizeRecord(file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return request.post('/record/recognize', fd)
+}
+
+/** 取某账单的截图（data URL） */
+export function getRecordImage(id) {
+  return request.get(`/record/${id}/image`)
+}

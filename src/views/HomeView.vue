@@ -1,7 +1,10 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { pageRecord, createRecord, updateRecord, deleteRecord } from '@/api/record'
+import {
+  pageRecord, createRecord, updateRecord, deleteRecord,
+  recognizeRecord, getRecordImage,
+} from '@/api/record'
 import { getCategoryTree } from '@/api/category'
 
 const loading = ref(false)
@@ -10,27 +13,25 @@ const total = ref(0)
 const tree = ref([]) // 全量分类树（含支出与收入）
 
 const query = reactive({
-  page: 1,
-  size: 10,
-  type: null,
-  categoryId: null,
-  parentCategoryId: null,
-  startDate: null,
-  endDate: null,
+  page: 1, size: 10, type: null, categoryId: null, parentCategoryId: null, startDate: null, endDate: null,
 })
 const dateRange = ref([])
-const filterCat = ref([]) // 过滤级联值：[一级] 或 [一级, 二级]
+const filterCat = ref([])
 
-// 级联选择器配置
 const cascaderProps = { value: 'id', label: 'name', children: 'children' }
 const filterCascaderProps = { ...cascaderProps, checkStrictly: true }
 
-// 弹窗
+// 记账弹窗
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const editingId = ref(null)
 const formRef = ref()
-const form = reactive({ type: 0, amount: null, remark: '', recordDate: '', catPath: [] })
+const recognizing = ref(false)
+const form = reactive({
+  type: 0, amount: null, remark: '', recordDate: '', catPath: [],
+  imageBase64: '',     // 新增时随账单入库的压缩图
+  imagePreview: '',    // 弹窗内预览用 data URL
+})
 
 const rules = {
   catPath: [{ required: true, message: '请选择分类', trigger: 'change' }],
@@ -38,8 +39,13 @@ const rules = {
   recordDate: [{ required: true, message: '请选择日期', trigger: 'change' }],
 }
 
-// 弹窗内按所选类型过滤分类树
 const formCatOptions = computed(() => tree.value.filter((n) => n.type === form.type))
+
+// 详情弹窗
+const detailVisible = ref(false)
+const detail = ref({})
+const detailImage = ref('')
+const detailImgLoading = ref(false)
 
 async function loadTree() {
   tree.value = await getCategoryTree()
@@ -49,88 +55,97 @@ async function load() {
   loading.value = true
   try {
     if (dateRange.value && dateRange.value.length === 2) {
-      query.startDate = dateRange.value[0]
-      query.endDate = dateRange.value[1]
-    } else {
-      query.startDate = null
-      query.endDate = null
-    }
+      query.startDate = dateRange.value[0]; query.endDate = dateRange.value[1]
+    } else { query.startDate = null; query.endDate = null }
     const data = await pageRecord(query)
     list.value = data.list
     total.value = data.total
-  } finally {
-    loading.value = false
-  }
+  } finally { loading.value = false }
 }
 
-// 过滤分类级联变化：长度1=按一级过滤，长度2=按二级过滤
 function onFilterCatChange(val) {
-  query.categoryId = null
-  query.parentCategoryId = null
+  query.categoryId = null; query.parentCategoryId = null
   if (val && val.length === 1) query.parentCategoryId = val[0]
   else if (val && val.length === 2) query.categoryId = val[1]
 }
-
-function onSearch() {
-  query.page = 1
-  load()
+function onSearch() { query.page = 1; load() }
+function onReset() {
+  query.type = null; query.categoryId = null; query.parentCategoryId = null
+  filterCat.value = []; dateRange.value = []; query.page = 1; load()
 }
 
-function onReset() {
-  query.type = null
-  query.categoryId = null
-  query.parentCategoryId = null
-  filterCat.value = []
-  dateRange.value = []
-  query.page = 1
-  load()
+function resetForm() {
+  Object.assign(form, {
+    type: 0, amount: null, remark: '',
+    recordDate: new Date().toISOString().slice(0, 10),
+    catPath: [], imageBase64: '', imagePreview: '',
+  })
 }
 
 function openCreate() {
-  dialogTitle.value = '记一笔'
-  editingId.value = null
-  Object.assign(form, {
-    type: 0,
-    amount: null,
-    remark: '',
-    recordDate: new Date().toISOString().slice(0, 10),
-    catPath: [],
-  })
+  dialogTitle.value = '记一笔'; editingId.value = null; resetForm()
   dialogVisible.value = true
 }
 
 function openEdit(row) {
-  dialogTitle.value = '编辑账单'
-  editingId.value = row.id
+  dialogTitle.value = '编辑账单'; editingId.value = row.id
   Object.assign(form, {
-    type: row.type,
-    amount: row.amount,
-    remark: row.remark || '',
-    recordDate: row.recordDate,
-    catPath: [row.parentCategoryId, row.categoryId],
+    type: row.type, amount: row.amount, remark: row.remark || '',
+    recordDate: row.recordDate, catPath: [row.parentCategoryId, row.categoryId],
+    imageBase64: '', imagePreview: '',
   })
+  // 编辑时若已有截图，拉来预览（编辑不改图）
+  if (row.hasImage === 1) {
+    getRecordImage(row.id).then((r) => { form.imagePreview = r.image }).catch(() => {})
+  }
   dialogVisible.value = true
 }
 
-// 类型切换时清空已选分类（避免类型与分类不一致）
-function onTypeChange() {
-  form.catPath = []
+// 选择截图 → 上传识别 → 预填
+async function onPickImage(uploadFile) {
+  const raw = uploadFile.raw || uploadFile
+  recognizing.value = true
+  try {
+    const r = await recognizeRecord(raw)
+    if (r.imageBase64) {
+      form.imageBase64 = r.imageBase64
+      form.imagePreview = 'data:image/jpeg;base64,' + r.imageBase64
+    }
+    if (r.recognized) {
+      if (r.type !== null && r.type !== undefined) form.type = r.type
+      if (r.amount !== null && r.amount !== undefined) form.amount = Number(r.amount)
+      if (r.recordDate) form.recordDate = r.recordDate
+      if (r.remark) form.remark = r.remark
+      if (r.categoryId && r.parentCategoryId) form.catPath = [r.parentCategoryId, r.categoryId]
+      ElMessage.success('已识别并预填，请核对后提交')
+    } else {
+      ElMessage.warning(r.message || '未能自动识别，请手动填写')
+    }
+  } catch (e) {
+    // 拦截器已提示
+  } finally {
+    recognizing.value = false
+  }
 }
+
+function removeImage() {
+  form.imageBase64 = ''; form.imagePreview = ''
+}
+
+function onTypeChange() { form.catPath = [] }
 
 async function onSubmit() {
   await formRef.value.validate()
   const categoryId = form.catPath[form.catPath.length - 1]
   const payload = {
-    categoryId,
-    type: form.type,
-    amount: form.amount,
-    remark: form.remark,
-    recordDate: form.recordDate,
+    categoryId, type: form.type, amount: form.amount,
+    remark: form.remark, recordDate: form.recordDate,
   }
   if (editingId.value) {
     await updateRecord(editingId.value, payload)
     ElMessage.success('修改成功')
   } else {
+    if (form.imageBase64) payload.imageBase64 = form.imageBase64
     await createRecord(payload)
     ElMessage.success('记账成功')
   }
@@ -145,10 +160,23 @@ async function onDelete(row) {
   load()
 }
 
-onMounted(() => {
-  loadTree()
-  load()
-})
+// 点击行 → 详情
+async function openDetail(row) {
+  detail.value = row
+  detailImage.value = ''
+  detailVisible.value = true
+  if (row.hasImage === 1) {
+    detailImgLoading.value = true
+    try {
+      const r = await getRecordImage(row.id)
+      detailImage.value = r.image
+    } catch { /* ignore */ } finally {
+      detailImgLoading.value = false
+    }
+  }
+}
+
+onMounted(() => { loadTree(); load() })
 </script>
 
 <template>
@@ -159,44 +187,29 @@ onMounted(() => {
         <el-option label="支出" :value="0" />
         <el-option label="收入" :value="1" />
       </el-select>
-      <el-cascader
-        v-model="filterCat"
-        :options="tree"
-        :props="filterCascaderProps"
-        placeholder="全部分类"
-        clearable
-        style="width: 240px"
-        @change="onFilterCatChange"
-      />
-      <el-date-picker
-        v-model="dateRange"
-        type="daterange"
-        range-separator="至"
-        start-placeholder="开始日期"
-        end-placeholder="结束日期"
-        value-format="YYYY-MM-DD"
-        style="width: 240px"
-      />
+      <el-cascader v-model="filterCat" :options="tree" :props="filterCascaderProps"
+        placeholder="全部分类" clearable style="width: 240px" @change="onFilterCatChange" />
+      <el-date-picker v-model="dateRange" type="daterange" range-separator="至"
+        start-placeholder="开始日期" end-placeholder="结束日期" value-format="YYYY-MM-DD" style="width: 240px" />
       <el-button type="primary" @click="onSearch">查询</el-button>
       <el-button @click="onReset">重置</el-button>
       <el-button type="success" style="margin-left: auto" @click="openCreate">记一笔</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="list" border stripe>
-      <el-table-column prop="recordDate" label="日期" width="120" />
-      <el-table-column label="分类" min-width="160">
+    <el-table v-loading="loading" :data="list" border stripe @row-click="openDetail" class="clickable">
+      <el-table-column prop="recordDate" label="日期" width="115" />
+      <el-table-column label="分类" min-width="150">
         <template #default="{ row }">
           {{ row.parentCategoryName }} <span class="sep">/</span> {{ row.categoryName }}
+          <el-icon v-if="row.hasImage === 1" class="clip" title="有截图"><Paperclip /></el-icon>
         </template>
       </el-table-column>
-      <el-table-column label="类型" width="90">
+      <el-table-column label="类型" width="80">
         <template #default="{ row }">
-          <el-tag :type="row.type === 1 ? 'success' : 'danger'">
-            {{ row.type === 1 ? '收入' : '支出' }}
-          </el-tag>
+          <el-tag :type="row.type === 1 ? 'success' : 'danger'">{{ row.type === 1 ? '收入' : '支出' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="金额" width="120">
+      <el-table-column label="金额" width="110">
         <template #default="{ row }">
           <span :style="{ color: row.type === 1 ? '#67c23a' : '#f56c6c' }">
             {{ row.type === 1 ? '+' : '-' }}{{ Number(row.amount).toFixed(2) }}
@@ -204,25 +217,34 @@ onMounted(() => {
         </template>
       </el-table-column>
       <el-table-column prop="remark" label="备注" show-overflow-tooltip />
-      <el-table-column label="操作" width="150">
+      <el-table-column label="操作" width="140">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
+          <el-button link type="danger" @click.stop="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-pagination
-      class="pager"
-      layout="total, prev, pager, next"
-      :total="total"
-      :page-size="query.size"
-      :current-page="query.page"
-      @current-change="(p) => { query.page = p; load() }"
-    />
+    <el-pagination class="pager" layout="total, prev, pager, next" :total="total"
+      :page-size="query.size" :current-page="query.page"
+      @current-change="(p) => { query.page = p; load() }" />
 
     <!-- 记账弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="460px">
+      <!-- 截图识别（仅新增时可上传） -->
+      <div v-if="!editingId" class="upload-area">
+        <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onPickImage">
+          <el-button type="primary" plain :loading="recognizing" :icon="recognizing ? '' : 'UploadFilled'">
+            {{ recognizing ? '识别中…' : '上传截图自动识别' }}
+          </el-button>
+        </el-upload>
+        <span class="upload-tip">支付宝/微信/银行/淘宝/拼多多等截图，自动填金额、日期、分类</span>
+      </div>
+      <div v-if="form.imagePreview" class="preview">
+        <el-image :src="form.imagePreview" fit="contain" style="max-height: 180px" :preview-src-list="[form.imagePreview]" />
+        <el-button v-if="!editingId" link type="danger" size="small" @click="removeImage">移除</el-button>
+      </div>
+
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
         <el-form-item label="类型" prop="type">
           <el-radio-group v-model="form.type" @change="onTypeChange">
@@ -231,13 +253,8 @@ onMounted(() => {
           </el-radio-group>
         </el-form-item>
         <el-form-item label="分类" prop="catPath">
-          <el-cascader
-            v-model="form.catPath"
-            :options="formCatOptions"
-            :props="cascaderProps"
-            placeholder="选择一级 / 二级分类"
-            style="width: 100%"
-          />
+          <el-cascader v-model="form.catPath" :options="formCatOptions" :props="cascaderProps"
+            placeholder="选择一级 / 二级分类" style="width: 100%" />
         </el-form-item>
         <el-form-item label="金额" prop="amount">
           <el-input-number v-model="form.amount" :min="0.01" :precision="2" :step="1" style="width: 100%" />
@@ -254,23 +271,39 @@ onMounted(() => {
         <el-button type="primary" @click="onSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 详情弹窗 -->
+    <el-dialog v-model="detailVisible" title="账单详情" width="480px">
+      <el-descriptions :column="1" border>
+        <el-descriptions-item label="日期">{{ detail.recordDate }}</el-descriptions-item>
+        <el-descriptions-item label="分类">{{ detail.parentCategoryName }} / {{ detail.categoryName }}</el-descriptions-item>
+        <el-descriptions-item label="类型">{{ detail.type === 1 ? '收入' : '支出' }}</el-descriptions-item>
+        <el-descriptions-item label="金额">
+          <span :style="{ color: detail.type === 1 ? '#67c23a' : '#f56c6c' }">
+            {{ detail.type === 1 ? '+' : '-' }}{{ Number(detail.amount || 0).toFixed(2) }}
+          </span>
+        </el-descriptions-item>
+        <el-descriptions-item label="备注">{{ detail.remark || '—' }}</el-descriptions-item>
+      </el-descriptions>
+      <div class="detail-img">
+        <div v-if="detailImgLoading">截图加载中…</div>
+        <el-image v-else-if="detailImage" :src="detailImage" fit="contain"
+          style="max-width: 100%" :preview-src-list="[detailImage]" />
+        <div v-else-if="detail.hasImage !== 1" class="no-img">（无截图）</div>
+      </div>
+    </el-dialog>
   </el-card>
 </template>
 
 <style scoped>
-.filter-bar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-.sep {
-  color: #c0c4cc;
-  margin: 0 2px;
-}
-.pager {
-  margin-top: 16px;
-  justify-content: flex-end;
-}
+.filter-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.sep { color: #c0c4cc; margin: 0 2px; }
+.clip { color: #909399; margin-left: 4px; vertical-align: middle; }
+.clickable :deep(.el-table__row) { cursor: pointer; }
+.pager { margin-top: 16px; justify-content: flex-end; }
+.upload-area { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.upload-tip { font-size: 12px; color: #909399; }
+.preview { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+.detail-img { margin-top: 14px; text-align: center; }
+.no-img { color: #909399; font-size: 13px; }
 </style>
