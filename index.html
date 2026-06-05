@@ -2,8 +2,18 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>AWP 记账</title>
+
+    <!-- PWA：添加到主屏幕后全屏(无浏览器UI) -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#409eff" />
+    <!-- iOS 专属：独立 App 模式 -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="AWP记账" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
   </head>
   <body>
     <div id="app"></div>
