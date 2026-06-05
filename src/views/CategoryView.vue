@@ -2,15 +2,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getCategoryTree, createCategory, updateCategory, deleteCategory } from '@/api/category'
-
-// 一级分类名 → Element Plus 图标名（全局已注册，可用 <component :is="名"/>）
-const L1_ICON = {
-  食品酒水: 'Food', 衣服饰品: 'ShoppingBag', 居家物业: 'House', 行车交通: 'Van',
-  交流通讯: 'Cellphone', 休闲娱乐: 'Basketball', 学习培训: 'Reading', 人情往来: 'Present',
-  医疗保健: 'FirstAidKit', 金融保险: 'Money', 其他杂项: 'More',
-  职业收入: 'Briefcase', 投资盈利: 'TrendCharts', 五险收入: 'Umbrella', 其他收入: 'Coin',
-}
-function iconOf(name) { return L1_ICON[name] || 'CollectionTag' }
+import { l1Icon, categoryIcon } from '@/utils/categoryIcon'
 
 const loading = ref(false)
 const activeType = ref('0') // '0' 支出 / '1' 收入
@@ -98,7 +90,7 @@ onMounted(load)
       <el-collapse-item v-for="top in treeData" :key="top.id" :name="top.id">
         <template #title>
           <div class="l1-title">
-            <el-icon class="l1-icon"><component :is="iconOf(top.name)" /></el-icon>
+            <el-icon class="l1-icon"><component :is="l1Icon(top.name)" /></el-icon>
             <span class="l1-name">{{ top.name }}</span>
             <span class="l1-count">{{ (top.children || []).length }} 项</span>
             <span class="l1-actions">
@@ -111,7 +103,7 @@ onMounted(load)
 
         <div class="grid">
           <div v-for="c in top.children" :key="c.id" class="cell">
-            <el-icon class="cell-icon"><component :is="iconOf(top.name)" /></el-icon>
+            <el-icon class="cell-icon"><component :is="categoryIcon(c.name, top.name)" /></el-icon>
             <div class="cell-name">{{ c.name }}</div>
             <div v-if="c.description" class="cell-desc">{{ c.description }}</div>
             <div class="cell-actions">
