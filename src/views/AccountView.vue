@@ -2,12 +2,14 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useMobile } from '@/composables/useMobile'
 import {
   listAccount, createAccount, batchCreateAccount, updateAccount, deleteAccount, setAccountBalance,
   recognizeAccount, listDebt, createDebt, updateDebt, deleteDebt,
   listInstallments, setInstallmentStatus,
 } from '@/api/account'
 
+const { isMobile } = useMobile()
 const router = useRouter()
 
 const METHODS = { 0: '等额本息', 1: '等额本金', 2: '付息后一次还本', 3: '一次性还本息' }
@@ -239,7 +241,7 @@ onMounted(load)
     </el-card>
 
     <!-- 新建/编辑 -->
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="440px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" :width="isMobile ? '95%' : '440px'">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="账户名" prop="name">
           <el-input v-model="form.name" placeholder="如：招行储蓄卡、我的支付宝" />
@@ -269,7 +271,7 @@ onMounted(load)
     </el-dialog>
 
     <!-- 截图导入账户（多条复核） -->
-    <el-dialog v-model="importDialog" title="截图导入账户" width="680px">
+    <el-dialog v-model="importDialog" title="截图导入账户" :width="isMobile ? '95%' : '680px'">
       <div class="reco-line">
         <el-upload :show-file-list="false" :auto-upload="false" accept="image/*" :on-change="onImportPick">
           <el-button type="primary" plain :loading="recognizing">上传截图自动识别</el-button>
@@ -303,28 +305,29 @@ onMounted(load)
     </el-dialog>
 
     <!-- 负债管理 -->
-    <el-dialog v-model="debtDialog" :title="`负债管理 · ${debtAccount?.name || ''}`" width="620px">
+    <el-dialog v-model="debtDialog" :title="`负债管理 · ${debtAccount?.name || ''}`" :width="isMobile ? '95%' : '880px'">
       <div class="toolbar">
         <span class="hint">存额 = 余额 − 未还款/已逾期负债；已还款不计入</span>
         <el-button type="primary" size="small" @click="openDebtCreate">添加负债</el-button>
       </div>
-      <el-table :data="debts" border size="small">
-        <el-table-column prop="name" label="说明" min-width="100" />
-        <el-table-column label="总额(本息)" min-width="130">
+
+      <!-- 桌面：表格 -->
+      <el-table v-if="!isMobile" :data="debts" border size="small">
+        <el-table-column prop="name" label="说明" min-width="110" />
+        <el-table-column label="总额(本息)" min-width="180">
           <template #default="{ row }">
-            {{ Number(row.total).toFixed(2) }}
-            <div class="months-r">含息 {{ Number(row.interestTotal || 0).toFixed(2) }}</div>
+            {{ Number(row.total).toFixed(2) }}<span class="incl">（含息 {{ Number(row.interestTotal || 0).toFixed(2) }}）</span>
           </template>
         </el-table-column>
-        <el-table-column label="方式" width="135">
+        <el-table-column label="方式" min-width="170">
           <template #default="{ row }">
             {{ row.type === 1 ? '按月' : '一次性' }} · {{ METHODS[row.repayMethod] }}
             <span v-if="row.rate" class="months">· {{ Number(row.rate) }}%</span>
           </template>
         </el-table-column>
-        <el-table-column label="进度" width="85"><template #default="{ row }">{{ row.paidPeriods }}/{{ row.periods }}期</template></el-table-column>
-        <el-table-column label="未结清" width="100"><template #default="{ row }"><span style="color:#f56c6c">{{ Number(row.outstanding).toFixed(2) }}</span></template></el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="进度" width="90"><template #default="{ row }">{{ row.paidPeriods }}/{{ row.periods }}期</template></el-table-column>
+        <el-table-column label="未结清" width="110"><template #default="{ row }"><span style="color:#f56c6c">{{ Number(row.outstanding).toFixed(2) }}</span></template></el-table-column>
+        <el-table-column label="操作" width="170">
           <template #default="{ row }">
             <el-button link type="success" size="small" @click="openInstallments(row)">分期</el-button>
             <el-button link type="primary" size="small" @click="openDebtEdit(row)">编辑</el-button>
@@ -332,6 +335,21 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 移动：竖排卡片 -->
+      <div v-else class="mlist">
+        <div v-for="row in debts" :key="row.id" class="dcard">
+          <div class="dcard-hd"><b>{{ row.name }}</b><span class="out">未结清 {{ Number(row.outstanding).toFixed(2) }}</span></div>
+          <div class="dcard-row">总额 {{ Number(row.total).toFixed(2) }}<span class="incl">（含息 {{ Number(row.interestTotal || 0).toFixed(2) }}）</span></div>
+          <div class="dcard-row muted">{{ row.type === 1 ? '按月' : '一次性' }} · {{ METHODS[row.repayMethod] }}<span v-if="row.rate"> · {{ Number(row.rate) }}%</span> · {{ row.paidPeriods }}/{{ row.periods }}期</div>
+          <div class="dcard-act">
+            <el-button link type="success" size="small" @click="openInstallments(row)">分期</el-button>
+            <el-button link type="primary" size="small" @click="openDebtEdit(row)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="onDebtDelete(row)">删</el-button>
+          </div>
+        </div>
+        <div v-if="!debts.length" class="empty-tip">暂无负债</div>
+      </div>
 
       <!-- 负债表单 -->
       <div v-if="debtFormVisible" class="debt-form">
@@ -367,14 +385,14 @@ onMounted(load)
     </el-dialog>
 
     <!-- 分期明细 -->
-    <el-dialog v-model="instDialog" :title="`分期明细 · ${instDebt?.name || ''}`" width="560px">
-      <el-table :data="installments" border size="small" max-height="420">
+    <el-dialog v-model="instDialog" :title="`分期明细 · ${instDebt?.name || ''}`" :width="isMobile ? '95%' : '640px'">
+      <el-table v-if="!isMobile" :data="installments" border size="small" max-height="440">
         <el-table-column label="期" width="55"><template #default="{ row }">{{ row.period }}</template></el-table-column>
         <el-table-column prop="dueDate" label="到期" width="115" />
         <el-table-column label="本金" width="90"><template #default="{ row }">{{ Number(row.principal).toFixed(2) }}</template></el-table-column>
         <el-table-column label="利息" width="90"><template #default="{ row }">{{ Number(row.interest).toFixed(2) }}</template></el-table-column>
         <el-table-column label="应还" width="95"><template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template></el-table-column>
-        <el-table-column label="状态/操作" min-width="120">
+        <el-table-column label="状态/操作" min-width="130">
           <template #default="{ row }">
             <el-tag size="small" :type="INST_TAG[row.status]">{{ INST_STATUS[row.status] }}</el-tag>
             <el-button v-if="row.status !== 1" link type="success" size="small" @click="toggleInstallment(row, 1)">还</el-button>
@@ -383,11 +401,24 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+      <div v-else class="mlist">
+        <div v-for="row in installments" :key="row.id" class="icard">
+          <div class="icard-hd">第 {{ row.period }} 期 · {{ row.dueDate }}
+            <el-tag size="small" :type="INST_TAG[row.status]">{{ INST_STATUS[row.status] }}</el-tag>
+          </div>
+          <div class="icard-row muted">本金 {{ Number(row.principal).toFixed(2) }} ｜ 利息 {{ Number(row.interest).toFixed(2) }} ｜ 应还 <b>{{ Number(row.amount).toFixed(2) }}</b></div>
+          <div class="icard-act">
+            <el-button v-if="row.status !== 1" type="success" size="small" @click="toggleInstallment(row, 1)">已还</el-button>
+            <el-button v-else size="small" @click="toggleInstallment(row, 0)">撤销</el-button>
+            <el-button v-if="row.status !== 2" type="danger" size="small" plain @click="toggleInstallment(row, 2)">逾期</el-button>
+          </div>
+        </div>
+      </div>
       <template #footer><el-button @click="instDialog = false">关闭</el-button></template>
     </el-dialog>
 
     <!-- 划账 -->
-    <el-dialog v-model="balDialog" title="划账 / 更新余额" width="380px">
+    <el-dialog v-model="balDialog" title="划账 / 更新余额" :width="isMobile ? '92%' : '380px'">
       <p class="bal-tip">把「{{ balTarget?.name }}」的余额校正为真实值：</p>
       <el-input-number v-model="balValue" :precision="2" :step="100" style="width: 100%" />
       <div class="reco-line" style="margin-top:10px">
@@ -419,4 +450,12 @@ onMounted(load)
 .imp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .months { color: #909399; font-size: 12px; }
 .months-r { color: #909399; font-size: 11px; text-align: right; }
+.incl { color: #909399; font-size: 12px; }
+.mlist { max-height: 60vh; overflow-y: auto; }
+.dcard, .icard { border: 1px solid #ebeef5; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.dcard-hd, .icard-hd { display: flex; justify-content: space-between; align-items: center; font-size: 14px; margin-bottom: 6px; gap: 8px; }
+.dcard-hd .out { color: #f56c6c; font-size: 12px; white-space: nowrap; }
+.dcard-row, .icard-row { font-size: 13px; margin-bottom: 4px; }
+.dcard-row.muted, .icard-row.muted { color: #909399; font-size: 12px; }
+.dcard-act, .icard-act { margin-top: 4px; }
 </style>

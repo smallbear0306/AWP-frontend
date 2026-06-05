@@ -3,15 +3,19 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getCategoryTree, createCategory, updateCategory, deleteCategory } from '@/api/category'
 
+// 一级分类名 → Element Plus 图标名（全局已注册，可用 <component :is="名"/>）
+const L1_ICON = {
+  食品酒水: 'Food', 衣服饰品: 'ShoppingBag', 居家物业: 'House', 行车交通: 'Van',
+  交流通讯: 'Cellphone', 休闲娱乐: 'Basketball', 学习培训: 'Reading', 人情往来: 'Present',
+  医疗保健: 'FirstAidKit', 金融保险: 'Money', 其他杂项: 'More',
+  职业收入: 'Briefcase', 投资盈利: 'TrendCharts', 五险收入: 'Umbrella', 其他收入: 'Coin',
+}
+function iconOf(name) { return L1_ICON[name] || 'CollectionTag' }
+
 const loading = ref(false)
 const activeType = ref('0') // '0' 支出 / '1' 收入
 const treeAll = ref([])
-
-const treeData = computed(() =>
-  treeAll.value.filter((n) => String(n.type) === activeType.value),
-)
-
-const treeProps = { label: 'name', children: 'children' }
+const treeData = computed(() => treeAll.value.filter((n) => String(n.type) === activeType.value))
 
 // 弹窗
 const dialogVisible = ref(false)
@@ -19,11 +23,8 @@ const dialogTitle = ref('')
 const mode = ref('addTop') // addTop | addSub | edit
 const editingId = ref(null)
 const formRef = ref()
-const form = reactive({ name: '', description: '', icon: '', parentId: null })
-
-const rules = {
-  name: [{ required: true, message: '请输入分类名称', trigger: 'blur' }],
-}
+const form = reactive({ name: '', type: 0, description: '', icon: '', parentId: null })
+const rules = { name: [{ required: true, message: '请输入分类名称', trigger: 'blur' }] }
 
 async function load() {
   loading.value = true
@@ -38,56 +39,36 @@ function openAddTop() {
   mode.value = 'addTop'
   dialogTitle.value = `新增一级分类（${activeType.value === '1' ? '收入' : '支出'}）`
   editingId.value = null
-  Object.assign(form, { name: '', description: '', icon: '', parentId: null })
+  Object.assign(form, { name: '', type: 0, description: '', icon: '', parentId: null })
   dialogVisible.value = true
 }
-
 function openAddSub(parent) {
   mode.value = 'addSub'
   dialogTitle.value = `在「${parent.name}」下新增二级分类`
   editingId.value = null
-  Object.assign(form, { name: '', description: '', icon: '', parentId: parent.id })
+  Object.assign(form, { name: '', type: 0, description: '', icon: '', parentId: parent.id })
   dialogVisible.value = true
 }
-
 function openEdit(node) {
   mode.value = 'edit'
   dialogTitle.value = `编辑「${node.name}」`
   editingId.value = node.id
-  Object.assign(form, {
-    name: node.name,
-    description: node.description || '',
-    icon: node.icon || '',
-    parentId: node.parentId,
-  })
+  Object.assign(form, { name: node.name, type: 0, description: node.description || '', icon: node.icon || '', parentId: node.parentId })
   dialogVisible.value = true
 }
-
 async function onSubmit() {
   await formRef.value.validate()
   const type = Number(activeType.value)
   if (mode.value === 'edit') {
-    await updateCategory(editingId.value, {
-      name: form.name,
-      type,
-      description: form.description,
-      icon: form.icon,
-    })
+    await updateCategory(editingId.value, { name: form.name, type, description: form.description, icon: form.icon })
     ElMessage.success('修改成功')
   } else {
-    await createCategory({
-      parentId: form.parentId,
-      name: form.name,
-      type,
-      description: form.description,
-      icon: form.icon,
-    })
+    await createCategory({ parentId: form.parentId, name: form.name, type, description: form.description, icon: form.icon })
     ElMessage.success('新增成功')
   }
   dialogVisible.value = false
   load()
 }
-
 async function onDelete(node) {
   const hasChildren = node.parentId == null && node.children && node.children.length > 0
   const msg = hasChildren
@@ -112,29 +93,36 @@ onMounted(load)
       <el-button type="primary" @click="openAddTop">新增一级分类</el-button>
     </div>
 
-    <el-tree
-      :data="treeData"
-      :props="treeProps"
-      node-key="id"
-      default-expand-all
-      :expand-on-click-node="false"
-    >
-      <template #default="{ data }">
-        <div class="node">
-          <span class="node-name">{{ data.name }}</span>
-          <span v-if="data.description" class="node-desc">（{{ data.description }}）</span>
+    <!-- 一级分类：折叠面板，默认全部收起 -->
+    <el-collapse>
+      <el-collapse-item v-for="top in treeData" :key="top.id" :name="top.id">
+        <template #title>
+          <div class="l1-title">
+            <el-icon class="l1-icon"><component :is="iconOf(top.name)" /></el-icon>
+            <span class="l1-name">{{ top.name }}</span>
+            <span class="l1-count">{{ (top.children || []).length }} 项</span>
+            <span class="l1-actions">
+              <el-button link type="primary" size="small" @click.stop="openAddSub(top)">加二级</el-button>
+              <el-button link type="primary" size="small" @click.stop="openEdit(top)">编辑</el-button>
+              <el-button link type="danger" size="small" @click.stop="onDelete(top)">删除</el-button>
+            </span>
+          </div>
+        </template>
 
-          <span class="node-actions">
-            <!-- 一级节点可加二级 -->
-            <el-button v-if="data.parentId == null" link type="primary" size="small" @click.stop="openAddSub(data)">
-              加二级
-            </el-button>
-            <el-button link type="primary" size="small" @click.stop="openEdit(data)">编辑</el-button>
-            <el-button link type="danger" size="small" @click.stop="onDelete(data)">删除</el-button>
-          </span>
+        <div class="grid">
+          <div v-for="c in top.children" :key="c.id" class="cell">
+            <el-icon class="cell-icon"><component :is="iconOf(top.name)" /></el-icon>
+            <div class="cell-name">{{ c.name }}</div>
+            <div v-if="c.description" class="cell-desc">{{ c.description }}</div>
+            <div class="cell-actions">
+              <el-icon class="act" title="编辑" @click="openEdit(c)"><Edit /></el-icon>
+              <el-icon class="act del" title="删除" @click="onDelete(c)"><Delete /></el-icon>
+            </div>
+          </div>
+          <div v-if="!(top.children || []).length" class="empty">暂无二级分类，点上方「加二级」添加</div>
         </div>
-      </template>
-    </el-tree>
+      </el-collapse-item>
+    </el-collapse>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="440px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
@@ -157,29 +145,30 @@ onMounted(load)
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.l1-title { display: flex; align-items: center; width: 100%; gap: 8px; }
+.l1-icon { font-size: 18px; color: #409eff; }
+.l1-name { font-size: 15px; font-weight: 600; }
+.l1-count { font-size: 12px; color: #909399; }
+.l1-actions { margin-left: auto; padding-right: 12px; }
+.grid { display: flex; flex-wrap: wrap; gap: 12px; padding: 6px 4px 10px; }
+.cell {
+  position: relative;
+  width: 92px;
+  padding: 12px 6px 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  text-align: center;
+  transition: box-shadow .2s, border-color .2s;
 }
-.node {
-  display: flex;
-  align-items: center;
-  width: 100%;
-}
-.node-name {
-  font-size: 14px;
-}
-.node-desc {
-  color: #909399;
-  font-size: 12px;
-}
-.node-tag {
-  margin-left: 8px;
-}
-.node-actions {
-  margin-left: auto;
-  padding-right: 8px;
-}
+.cell:hover { border-color: #c6e2ff; box-shadow: 0 2px 10px rgba(64,158,255,.15); }
+.cell-icon { font-size: 24px; color: #79bbff; }
+.cell-name { font-size: 13px; margin-top: 6px; color: #303133; }
+.cell-desc { font-size: 11px; color: #909399; margin-top: 2px; }
+.cell-actions { position: absolute; top: 4px; right: 4px; display: none; gap: 4px; }
+.cell:hover .cell-actions { display: flex; }
+.act { font-size: 13px; color: #909399; cursor: pointer; }
+.act:hover { color: #409eff; }
+.act.del:hover { color: #f56c6c; }
+.empty { color: #909399; font-size: 13px; padding: 8px; }
 </style>

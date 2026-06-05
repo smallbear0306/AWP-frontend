@@ -64,10 +64,9 @@ onMounted(() => { loadAccount(); loadDebts(); loadRecords() })
       <div class="sec-title">负债</div>
       <el-table :data="debts" border size="small" empty-text="无负债">
         <el-table-column prop="name" label="说明" min-width="110" />
-        <el-table-column label="总额(本息)" min-width="130">
+        <el-table-column label="总额(本息)" min-width="180">
           <template #default="{ row }">
-            {{ Number(row.total).toFixed(2) }}
-            <div class="muted-r">含息 {{ Number(row.interestTotal || 0).toFixed(2) }}</div>
+            {{ Number(row.total).toFixed(2) }}<span class="incl">（含息 {{ Number(row.interestTotal || 0).toFixed(2) }}）</span>
           </template>
         </el-table-column>
         <el-table-column label="方式" width="130">
@@ -133,4 +132,5 @@ onMounted(() => { loadAccount(); loadDebts(); loadRecords() })
 .pager { margin-top: 12px; justify-content: flex-end; }
 .muted { color: #909399; font-size: 12px; }
 .muted-r { color: #909399; font-size: 11px; text-align: right; }
+.incl { color: #909399; font-size: 12px; }
 </style>
