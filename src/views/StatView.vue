@@ -1,7 +1,10 @@
 <script setup>
 import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import { statSummary, statCategory, statTrend } from '@/api/stat'
+import { useMobile } from '@/composables/useMobile'
+
+const { isMobile } = useMobile()
 
 const dateRange = ref([])
 const summary = reactive({ income: 0, expense: 0, balance: 0 })
@@ -99,22 +102,21 @@ onBeforeUnmount(() => {
       <el-button type="primary" @click="loadAll">查询</el-button>
     </el-card>
 
-    <!-- 汇总卡片 -->
-    <el-row :gutter="16" class="summary-row">
-      <el-col :span="8">
-        <el-card><div class="sum-label">收入</div><div class="sum-val income">{{ summary.income.toFixed(2) }}</div></el-card>
-      </el-col>
-      <el-col :span="8">
-        <el-card><div class="sum-label">支出</div><div class="sum-val expense">{{ summary.expense.toFixed(2) }}</div></el-card>
-      </el-col>
-      <el-col :span="8">
-        <el-card><div class="sum-label">结余</div><div class="sum-val">{{ summary.balance.toFixed(2) }}</div></el-card>
-      </el-col>
+    <!-- 汇总卡片：移动端紧凑一行三栏，桌面端三卡 -->
+    <div v-if="isMobile" class="sum-mobile">
+      <div class="sm-cell"><div class="sum-label">收入</div><div class="sum-val income">{{ summary.income.toFixed(2) }}</div></div>
+      <div class="sm-cell"><div class="sum-label">支出</div><div class="sum-val expense">{{ summary.expense.toFixed(2) }}</div></div>
+      <div class="sm-cell"><div class="sum-label">结余</div><div class="sum-val">{{ summary.balance.toFixed(2) }}</div></div>
+    </div>
+    <el-row v-else :gutter="16" class="summary-row">
+      <el-col :span="8"><el-card><div class="sum-label">收入</div><div class="sum-val income">{{ summary.income.toFixed(2) }}</div></el-card></el-col>
+      <el-col :span="8"><el-card><div class="sum-label">支出</div><div class="sum-val expense">{{ summary.expense.toFixed(2) }}</div></el-card></el-col>
+      <el-col :span="8"><el-card><div class="sum-label">结余</div><div class="sum-val">{{ summary.balance.toFixed(2) }}</div></el-card></el-col>
     </el-row>
 
     <el-row :gutter="16">
-      <el-col :span="12">
-        <el-card>
+      <el-col :span="isMobile ? 24 : 12">
+        <el-card class="chart-card">
           <div class="chart-header">
             <span>分类占比</span>
             <el-radio-group v-model="pieType" size="small" @change="loadPie">
@@ -125,8 +127,8 @@ onBeforeUnmount(() => {
           <div ref="pieRef" class="chart"></div>
         </el-card>
       </el-col>
-      <el-col :span="12">
-        <el-card>
+      <el-col :span="isMobile ? 24 : 12">
+        <el-card class="chart-card">
           <div class="chart-header"><span>收支趋势（按月）</span></div>
           <div ref="lineRef" class="chart"></div>
         </el-card>
@@ -175,4 +177,12 @@ onBeforeUnmount(() => {
 .chart {
   height: 320px;
 }
+/* 移动端汇总：白卡内三等分 */
+.sum-mobile {
+  display: flex; background: #fff; border-radius: 10px;
+  padding: 14px 0; margin-bottom: 14px;
+}
+.sm-cell { flex: 1; text-align: center; }
+.sm-cell .sum-val { font-size: 18px; margin-top: 4px; }
+.chart-card { margin-bottom: 14px; }
 </style>

@@ -191,14 +191,44 @@ onMounted(load)
 
 <template>
   <div v-loading="loading">
-    <!-- 汇总 -->
-    <el-row :gutter="16" class="summary">
+    <!-- 汇总：移动端 hero，桌面端三卡 -->
+    <div v-if="isMobile" class="net-hero">
+      <div class="nh-label">总存额（净值）</div>
+      <div class="nh-net" :class="{ neg: totalNet < 0 }">{{ totalNet.toFixed(2) }}</div>
+      <div class="nh-sub">总余额 {{ totalBalance.toFixed(2) }}　·　总负债 <span class="debtw">{{ totalDebt.toFixed(2) }}</span></div>
+    </div>
+    <el-row v-else :gutter="16" class="summary">
       <el-col :span="8"><el-card><div class="lbl">总余额</div><div class="val">{{ totalBalance.toFixed(2) }}</div></el-card></el-col>
       <el-col :span="8"><el-card><div class="lbl">总负债</div><div class="val debt">{{ totalDebt.toFixed(2) }}</div></el-card></el-col>
       <el-col :span="8"><el-card><div class="lbl">总存额（净值）</div><div class="val" :class="{ neg: totalNet < 0 }">{{ totalNet.toFixed(2) }}</div></el-card></el-col>
     </el-row>
 
-    <el-card>
+    <!-- 移动端：账户卡片 -->
+    <div v-if="isMobile">
+      <div class="m-actions">
+        <el-button type="warning" plain size="small" @click="openImport">截图导入</el-button>
+        <el-button type="primary" size="small" @click="openCreate">新建账户</el-button>
+      </div>
+      <div v-for="row in list" :key="row.id" class="acc-card" @click="goDetail(row)">
+        <div class="ac-top">
+          <div class="ac-name">{{ row.name }}
+            <el-tag size="small" :type="row.kind === 1 ? 'warning' : 'info'">{{ row.kind === 1 ? '信用' : '储蓄' }}</el-tag>
+          </div>
+          <div class="ac-net" :style="{ color: Number(row.netAmount) < 0 ? '#f56c6c' : '#303133' }">{{ Number(row.netAmount).toFixed(2) }}</div>
+        </div>
+        <div class="ac-sub">{{ row.type }}<span v-if="row.bank"> · {{ row.bank }}</span>　余额 {{ Number(row.balance).toFixed(2) }}<span v-if="Number(row.debtTotal) > 0"> · 负债 <span class="debtw">{{ Number(row.debtTotal).toFixed(2) }}</span></span></div>
+        <div class="ac-actions" @click.stop>
+          <el-button link type="primary" size="small" @click="openBalance(row)">划账</el-button>
+          <el-button link type="warning" size="small" @click="openDebts(row)">负债</el-button>
+          <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+          <el-button link type="danger" size="small" @click="onDelete(row)">删除</el-button>
+        </div>
+      </div>
+      <div v-if="!list.length" class="empty-tip">还没有账户，点「新建账户」添加</div>
+    </div>
+
+    <!-- 桌面端：表格 -->
+    <el-card v-else>
       <div class="toolbar">
         <span class="hint">点账户行看详情；余额由记账自动增减，长期未更新可用「划账」校正</span>
         <span>
@@ -451,6 +481,24 @@ onMounted(load)
 .months { color: #909399; font-size: 12px; }
 .months-r { color: #909399; font-size: 11px; text-align: right; }
 .incl { color: #909399; font-size: 12px; }
+.debtw { color: #f56c6c; }
+/* 移动端账户 */
+.net-hero {
+  background: linear-gradient(135deg, #5b9cff, #409eff); color: #fff;
+  border-radius: 14px; padding: 18px; margin-bottom: 14px; box-shadow: 0 6px 16px rgba(64,158,255,.3);
+}
+.net-hero .nh-label { font-size: 13px; opacity: .9; }
+.net-hero .nh-net { font-size: 30px; font-weight: bold; margin: 4px 0 8px; }
+.net-hero .nh-net.neg { color: #ffe2e2; }
+.net-hero .nh-sub { font-size: 13px; opacity: .95; }
+.net-hero .nh-sub .debtw { color: #ffe2e2; }
+.m-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 10px; }
+.acc-card { background: #fff; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; cursor: pointer; }
+.ac-top { display: flex; justify-content: space-between; align-items: center; }
+.ac-name { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.ac-net { font-size: 17px; font-weight: bold; }
+.ac-sub { font-size: 12px; color: #909399; margin-top: 4px; }
+.ac-actions { margin-top: 6px; border-top: 1px solid #f2f3f5; padding-top: 4px; }
 .mlist { max-height: 60vh; overflow-y: auto; }
 .dcard, .icard { border: 1px solid #ebeef5; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
 .dcard-hd, .icard-hd { display: flex; justify-content: space-between; align-items: center; font-size: 14px; margin-bottom: 6px; gap: 8px; }

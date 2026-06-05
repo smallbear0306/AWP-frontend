@@ -117,7 +117,8 @@ async function load() {
     list.value = data.list; total.value = data.total
   } finally { loading.value = false }
 }
-function refreshAll() { load(); loadMobile() }
+// 只刷新当前形态需要的数据，减少在慢隧道上的接口往返
+function refreshAll() { if (isMobile.value) loadMobile(); else load() }
 
 function onFilterCatChange(val) {
   query.categoryId = null; query.parentCategoryId = null
@@ -223,7 +224,8 @@ async function openDetail(row) {
 watch(() => route.query.add, (v) => { if (v) openCreate() })
 
 onMounted(() => {
-  loadTree(); loadAccounts(); load(); loadMobile()
+  loadTree(); loadAccounts()
+  if (isMobile.value) loadMobile(); else load()
   if (route.query.add) openCreate()
 })
 </script>

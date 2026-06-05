@@ -87,27 +87,30 @@ function onLogout() {
 .nickname { font-size: 14px; }
 .aside { background-color: #fff; border-right: 1px solid #e6e6e6; }
 .main { background-color: #f5f6f8; }
-.main-mobile { padding: 12px 12px 76px; }
+.main-mobile { padding: 12px 12px calc(72px + env(safe-area-inset-bottom, 0px)); }
 
 /* 底部 Tab 栏 */
 .tabbar {
-  position: fixed; left: 0; right: 0; bottom: 0; height: 58px;
-  background: #fff; border-top: 1px solid #ebeef5;
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: #fff; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.06);
   display: flex; align-items: center; justify-content: space-around;
-  z-index: 1000; padding-bottom: env(safe-area-inset-bottom, 0);
+  z-index: 1000; overflow: visible;
 }
 .tab {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  flex: 1; height: 56px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   font-size: 11px; color: #909399; cursor: pointer;
 }
-.tab .el-icon { font-size: 20px; }
+.tab .el-icon { font-size: 21px; }
 .tab.on { color: #409eff; }
 .tab-add {
-  width: 52px; height: 52px; border-radius: 50%;
+  width: 50px; height: 50px; border-radius: 50%;
   background: #409eff; color: #fff;
   display: flex; align-items: center; justify-content: center;
-  margin-top: -22px; box-shadow: 0 4px 10px rgba(64,158,255,.4);
-  flex-shrink: 0; cursor: pointer;
+  margin-top: -24px; box-shadow: 0 4px 12px rgba(64, 158, 255, 0.45);
+  border: 3px solid #fff; flex-shrink: 0; cursor: pointer;
 }
 .tab-add .el-icon { font-size: 26px; }
 </style>
